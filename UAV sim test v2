@@ -1,0 +1,632 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, Optional
+from scipy import stats
+import pandas as pd
+from datetime import datetime
+import json
+import os
+
+@dataclass
+class Drone:
+    """Individual drone with properties"""
+    id: int
+    speed: float  # km/h
+    stealth: float  # 0.5-0.99
+    accuracy: float  # 0.5-0.99
+    drone_type: str  # light, medium, heavy
+    battery: float  # 0.5-1.0
+    formation: str  # tight, medium, spread
+    ai_behavior: str  # aggressive, evasive, coordinated
+    inertia: float  # 0.1-1.0
+    x: float  # 2D position
+    y: float
+    detected: bool = False
+    intercepted: bool = False
+    time_to_target: float = 0.0
+
+@dataclass
+class DefenseUnit:
+    """Defense system unit"""
+    id: int
+    num_missiles: int
+    response_time: float  # seconds
+    status: str = "online"  # online/offline
+    missiles_remaining: int = 0
+    reload_time: float = 0.0
+    
+    def __post_init__(self):
+        self.missiles_remaining = self.num_missiles
+
+class MonteCarloSimulation:
+    def __init__(self, config: Dict, random_seed: Optional[int] = None):
+        self.config = config
+        self.results = []
+        self.scenario_name = config.get('scenario_name', 'default')
+        self.random_seed = random_seed
+        
+        if random_seed is not None:
+            np.random.seed(random_seed)
+        
+        # Create output directories
+        self.create_output_dirs()
+        
+    def create_output_dirs(self):
+        """Create directories for outputs"""
+        os.makedirs('simulation_results/data', exist_ok=True)
+        os.makedirs('simulation_results/figures', exist_ok=True)
+        os.makedirs('simulation_results/reports', exist_ok=True)
+        
+    def generate_drones(self, n_drones: int) -> List[Drone]:
+        """Generate drone swarm with specified distributions"""
+        drones = []
+        formation = np.random.choice(['tight', 'medium', 'spread'])
+        
+        for i in range(n_drones):
+            speed = np.clip(np.random.normal(60, 15), 40, 100)
+            stealth = 0.5 + 0.49 * np.random.beta(2, 5)
+            accuracy = np.random.triangular(0.5, 0.75, 0.99)
+            drone_type = np.random.choice(['light', 'medium', 'heavy'], 
+                                         p=[0.5, 0.3, 0.2])
+            battery = np.random.uniform(0.5, 1.0)
+            ai_behavior = np.random.choice(['aggressive', 'evasive', 'coordinated'])
+            inertia = np.random.uniform(0.1, 1.0)
+            
+            if formation == 'tight':
+                x = np.random.normal(0, 20)
+                y = np.random.normal(0, 20)
+            elif formation == 'medium':
+                x = np.random.normal(0, 50)
+                y = np.random.normal(0, 50)
+            else:
+                x = np.random.uniform(-100, 100)
+                y = np.random.uniform(-100, 100)
+            
+            time_to_target = np.clip(np.random.normal(30, 15), 5, 60)
+            speed *= battery
+            accuracy *= battery
+            
+            drone = Drone(i, speed, stealth, accuracy, drone_type, battery,
+                         formation, ai_behavior, inertia, x, y,
+                         time_to_target=time_to_target)
+            drones.append(drone)
+            
+        return drones
+    
+    def generate_defense_units(self) -> List[DefenseUnit]:
+        """Generate defense units"""
+        units = []
+        num_units = self.config['num_units']
+        
+        for i in range(num_units):
+            num_missiles = np.random.randint(
+                self.config['missiles_per_unit'][0],
+                self.config['missiles_per_unit'][1] + 1
+            )
+            response_time = np.random.uniform(0.5, 5.0)
+            status = "offline" if np.random.random() < 0.075 else "online"
+            units.append(DefenseUnit(i, num_missiles, response_time, status))
+            
+        return units
+    
+    def calculate_detection_probability(self, drone: Drone, 
+                                       env_factors: Dict) -> float:
+        """Calculate detection probability with all modifiers"""
+        base_p = 0.6 + 0.39 * np.random.beta(5, 2)
+        p_detect = base_p * (1 - drone.stealth * 0.3)
+        p_detect *= env_factors['weather_factor']
+        p_detect *= env_factors['terrain_factor']
+        p_detect *= (1 - env_factors['radar_jam'])
+        p_detect *= env_factors['temp_factor']
+        
+        if drone.stealth > 0.8:
+            p_detect *= env_factors['low_sig_radar']
+        
+        p_detect *= (1 - env_factors['comm_jam_level'] * 0.2)
+        return np.clip(p_detect, 0, 0.99)
+    
+    def calculate_intercept_probability(self, drone: Drone, 
+                                       env_factors: Dict) -> float:
+        """Calculate interception probability"""
+        base_p = 0.5 + 0.49 * np.random.beta(5, 2)
+        speed_factor = 1 - (drone.speed - 40) / (100 - 40) * 0.3
+        stealth_factor = 1 - drone.stealth * 0.2
+        inertia_factor = 1 - drone.inertia * 0.15
+        
+        if drone.ai_behavior == 'evasive':
+            behavior_factor = 0.7
+        elif drone.ai_behavior == 'aggressive':
+            behavior_factor = 0.9
+        else:
+            behavior_factor = 0.8
+        
+        p_intercept = base_p * speed_factor * stealth_factor * behavior_factor * inertia_factor
+        p_intercept *= env_factors['weather_factor']
+        p_intercept *= env_factors['temp_factor']
+        
+        if np.random.random() < env_factors['resource_failure']:
+            p_intercept = 0
+        
+        return np.clip(p_intercept, 0, 0.99)
+    
+    def generate_environmental_factors(self) -> Dict:
+        """Generate environmental conditions for scenario"""
+        return {
+            'weather_factor': np.random.uniform(0.6, 1.0),
+            'terrain_factor': np.random.uniform(0.5, 1.0),
+            'radar_jam': np.random.beta(2, 5) * 0.3,
+            'comm_jam_level': np.random.beta(2, 5),
+            'comm_delay': np.random.uniform(0, 2),
+            'temp_factor': np.random.beta(5, 2) * 0.3 + 0.7,
+            'low_sig_radar': np.random.uniform(0.6, 1.0),
+            'system_latency': np.random.uniform(0, 2),
+            'resource_failure': 0.05
+        }
+    
+    def prioritize_targets(self, drones: List[Drone], 
+                          strategy: str) -> List[Drone]:
+        """Prioritize which drones to engage first"""
+        if strategy == 'fastest_first':
+            return sorted(drones, key=lambda d: d.speed, reverse=True)
+        elif strategy == 'most_threat':
+            threat_scores = []
+            for d in drones:
+                threat = d.speed * 0.3 + d.accuracy * 0.5
+                if d.drone_type == 'heavy':
+                    threat *= 1.5
+                elif d.drone_type == 'medium':
+                    threat *= 1.2
+                threat_scores.append((d, threat))
+            return [d for d, _ in sorted(threat_scores, 
+                                        key=lambda x: x[1], reverse=True)]
+        else:
+            np.random.shuffle(drones)
+            return drones
+    
+    def run_single_scenario(self, n_drones: int) -> Dict:
+        """Run one Monte Carlo iteration"""
+        drones = self.generate_drones(n_drones)
+        units = self.generate_defense_units()
+        env_factors = self.generate_environmental_factors()
+        
+        for drone in drones:
+            p_detect = self.calculate_detection_probability(drone, env_factors)
+            drone.detected = np.random.random() < p_detect
+        
+        detected_drones = [d for d in drones if d.detected]
+        strategy = self.config['priority_strategy']
+        prioritized_drones = self.prioritize_targets(detected_drones, strategy)
+        
+        total_missiles = sum(u.missiles_remaining for u in units if u.status == "online")
+        intercepted_count = 0
+        
+        for drone in prioritized_drones:
+            if total_missiles <= 0:
+                break
+                
+            available_unit = None
+            for unit in units:
+                if unit.status == "online" and unit.missiles_remaining > 0:
+                    available_unit = unit
+                    break
+            
+            if available_unit is None:
+                break
+            
+            p_intercept = self.calculate_intercept_probability(drone, env_factors)
+            
+            if np.random.random() < p_intercept:
+                drone.intercepted = True
+                intercepted_count += 1
+            
+            available_unit.missiles_remaining -= 1
+            total_missiles -= 1
+        
+        num_intercepted = sum(1 for d in drones if d.intercepted)
+        num_passed = n_drones - num_intercepted
+        success_rate = num_intercepted / n_drones if n_drones > 0 else 0
+        
+        passed_drones = [d for d in drones if not d.intercepted]
+        civil_risk = sum(d.accuracy for d in passed_drones) / n_drones if n_drones > 0 else 0
+        
+        missiles_used = sum(u.num_missiles - u.missiles_remaining for u in units)
+        
+        return {
+            'n_drones': n_drones,
+            'num_detected': len(detected_drones),
+            'num_intercepted': num_intercepted,
+            'num_passed': num_passed,
+            'success_rate': success_rate,
+            'civil_risk': civil_risk,
+            'missiles_used': missiles_used,
+            'detection_rate': len(detected_drones) / n_drones if n_drones > 0 else 0,
+            'weather_factor': env_factors['weather_factor'],
+            'terrain_factor': env_factors['terrain_factor'],
+            'radar_jam': env_factors['radar_jam'],
+            'comm_jam_level': env_factors['comm_jam_level'],
+            'strategy': strategy,
+            'num_units': self.config['num_units'],
+            'missiles_per_unit_avg': np.mean(self.config['missiles_per_unit'])
+        }
+    
+    def run_simulation(self, n_iterations: int, n_drones_range: Tuple[int, int]):
+        """Run full Monte Carlo simulation"""
+        print(f"Running {n_iterations} Monte Carlo iterations for scenario: {self.scenario_name}")
+        print(f"Configuration: {self.config['num_units']} units, "
+              f"strategy={self.config['priority_strategy']}")
+        
+        for i in range(n_iterations):
+            n_drones = np.random.randint(n_drones_range[0], n_drones_range[1] + 1)
+            result = self.run_single_scenario(n_drones)
+            self.results.append(result)
+            
+            if (i + 1) % 100 == 0:
+                print(f"Progress: {i + 1}/{n_iterations} ({100*(i+1)/n_iterations:.1f}%)")
+        
+        print("✓ Simulation complete!")
+        self.save_results()
+    
+    def save_results(self):
+        """Save simulation results to CSV"""
+        df = pd.DataFrame(self.results)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f'simulation_results/data/{self.scenario_name}_{timestamp}.csv'
+        df.to_csv(filename, index=False)
+        print(f"✓ Results saved to: {filename}")
+        
+        # Save configuration
+        config_file = f'simulation_results/data/config_{self.scenario_name}_{timestamp}.json'
+        with open(config_file, 'w') as f:
+            json.dump(self.config, f, indent=2)
+        print(f"✓ Configuration saved to: {config_file}")
+    
+    def analyze_results(self) -> Dict:
+        """Statistical analysis of results"""
+        df = pd.DataFrame(self.results)
+        
+        analysis = {
+            'scenario_name': self.scenario_name,
+            'n_iterations': len(self.results),
+            'mean_success_rate': df['success_rate'].mean(),
+            'std_success_rate': df['success_rate'].std(),
+            'ci_95_lower': df['success_rate'].quantile(0.025),
+            'ci_95_upper': df['success_rate'].quantile(0.975),
+            'mean_detection_rate': df['detection_rate'].mean(),
+            'mean_civil_risk': df['civil_risk'].mean(),
+            'mean_missiles_used': df['missiles_used'].mean(),
+            'mean_passed': df['num_passed'].mean(),
+            'median_success_rate': df['success_rate'].median(),
+        }
+        
+        # Sensitivity analysis
+        sensitivity = {}
+        for col in ['weather_factor', 'terrain_factor', 'n_drones', 'radar_jam']:
+            if col in df.columns:
+                corr = df[col].corr(df['success_rate'])
+                sensitivity[col] = abs(corr)
+        
+        analysis['sensitivity'] = sensitivity
+        
+        return analysis
+    
+    def save_analysis_report(self, analysis: Dict):
+        """Save analysis report to file"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f'simulation_results/reports/analysis_{self.scenario_name}_{timestamp}.txt'
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write("="*70 + "\n")
+            f.write(f"MONTE CARLO SIMULATION - ANALYSIS REPORT\n")
+            f.write(f"Scenario: {analysis['scenario_name']}\n")
+            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*70 + "\n\n")
+            
+            f.write(f"Number of iterations: {analysis['n_iterations']}\n\n")
+            
+            f.write("MAIN RESULTS:\n")
+            f.write(f"  Mean Success Rate: {analysis['mean_success_rate']:.3f} ± {analysis['std_success_rate']:.3f}\n")
+            f.write(f"  Median Success Rate: {analysis['median_success_rate']:.3f}\n")
+            f.write(f"  95% CI: [{analysis['ci_95_lower']:.3f}, {analysis['ci_95_upper']:.3f}]\n")
+            f.write(f"  Mean Detection Rate: {analysis['mean_detection_rate']:.3f}\n")
+            f.write(f"  Mean Civil Risk: {analysis['mean_civil_risk']:.3f}\n")
+            f.write(f"  Mean Missiles Used: {analysis['mean_missiles_used']:.1f}\n")
+            f.write(f"  Mean Drones Passed: {analysis['mean_passed']:.1f}\n\n")
+            
+            f.write("SENSITIVITY ANALYSIS:\n")
+            for var, sens in analysis['sensitivity'].items():
+                f.write(f"  {var}: {sens:.3f}\n")
+            f.write("\n" + "="*70 + "\n")
+        
+        print(f"✓ Analysis report saved to: {filename}")
+    
+    def visualize_results(self, swedish_labels: bool = False):
+        """Create visualizations"""
+        df = pd.DataFrame(self.results)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Set labels
+        if swedish_labels:
+            labels = {
+                'success_rate': 'Framgångsgrad',
+                'n_drones': 'Antal drönare',
+                'detection_rate': 'Upptäcktsgrad',
+                'frequency': 'Frekvens',
+                'missiles_used': 'Missiler använda',
+                'civil_risk': 'Civil risk',
+                'mean': 'Medelvärde'
+            }
+        else:
+            labels = {
+                'success_rate': 'Success Rate',
+                'n_drones': 'Number of Drones',
+                'detection_rate': 'Detection Rate',
+                'frequency': 'Frequency',
+                'missiles_used': 'Missiles Used',
+                'civil_risk': 'Civil Risk',
+                'mean': 'Mean'
+            }
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        fig.suptitle(f'Monte Carlo Simulation: {self.scenario_name}', fontsize=16)
+        
+        # 1. Success rate distribution
+        axes[0, 0].hist(df['success_rate'], bins=30, edgecolor='black', alpha=0.7)
+        axes[0, 0].set_xlabel(labels['success_rate'])
+        axes[0, 0].set_ylabel(labels['frequency'])
+        axes[0, 0].set_title(f'{labels["success_rate"]} Distribution')
+        mean_val = df['success_rate'].mean()
+        axes[0, 0].axvline(mean_val, color='r', linestyle='--', 
+                          label=f'{labels["mean"]}: {mean_val:.3f}')
+        axes[0, 0].legend()
+        
+        # 2. Success rate vs drones
+        axes[0, 1].scatter(df['n_drones'], df['success_rate'], alpha=0.5)
+        axes[0, 1].set_xlabel(labels['n_drones'])
+        axes[0, 1].set_ylabel(labels['success_rate'])
+        axes[0, 1].set_title(f'{labels["success_rate"]} vs {labels["n_drones"]}')
+        
+        # 3. Detection vs success
+        axes[0, 2].scatter(df['detection_rate'], df['success_rate'], alpha=0.5)
+        axes[0, 2].set_xlabel(labels['detection_rate'])
+        axes[0, 2].set_ylabel(labels['success_rate'])
+        axes[0, 2].set_title(f'{labels["detection_rate"]} vs {labels["success_rate"]}')
+        
+        # 4. Weather impact
+        weather_bins = pd.cut(df['weather_factor'], bins=5)
+        success_by_weather = df.groupby(weather_bins)['success_rate'].mean()
+        axes[1, 0].bar(range(len(success_by_weather)), success_by_weather.values)
+        axes[1, 0].set_xlabel('Weather Factor (binned)')
+        axes[1, 0].set_ylabel(f'Mean {labels["success_rate"]}')
+        axes[1, 0].set_title('Weather Impact')
+        
+        # 5. Missiles used
+        axes[1, 1].hist(df['missiles_used'], bins=20, edgecolor='black', alpha=0.7)
+        axes[1, 1].set_xlabel(labels['missiles_used'])
+        axes[1, 1].set_ylabel(labels['frequency'])
+        axes[1, 1].set_title(f'{labels["missiles_used"]} Distribution')
+        
+        # 6. Civil risk
+        axes[1, 2].hist(df['civil_risk'], bins=20, edgecolor='black', alpha=0.7, color='red')
+        axes[1, 2].set_xlabel(labels['civil_risk'])
+        axes[1, 2].set_ylabel(labels['frequency'])
+        axes[1, 2].set_title(f'{labels["civil_risk"]} Distribution')
+        
+        plt.tight_layout()
+        filename = f'simulation_results/figures/overview_{self.scenario_name}_{timestamp}.png'
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"✓ Overview plot saved to: {filename}")
+        plt.show()
+        
+        # Correlation heatmap
+        fig2, ax = plt.subplots(figsize=(10, 8))
+        numeric_cols = ['n_drones', 'detection_rate', 'success_rate', 
+                       'weather_factor', 'terrain_factor', 'missiles_used', 'civil_risk']
+        corr_matrix = df[numeric_cols].corr()
+        sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm', 
+                   center=0, ax=ax)
+        ax.set_title(f'Correlation Matrix: {self.scenario_name}')
+        plt.tight_layout()
+        filename = f'simulation_results/figures/correlation_{self.scenario_name}_{timestamp}.png'
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"✓ Correlation heatmap saved to: {filename}")
+        plt.show()
+
+def compare_scenarios(scenarios: List[Dict], n_iterations: int = 500, 
+                     n_drones_range: Tuple[int, int] = (10, 200)):
+    """Compare multiple scenarios side-by-side"""
+    print("\n" + "="*70)
+    print("SCENARIO COMPARISON MODE")
+    print("="*70)
+    
+    all_results = {}
+    
+    for scenario_config in scenarios:
+        sim = MonteCarloSimulation(scenario_config, random_seed=42)
+        sim.run_simulation(n_iterations, n_drones_range)
+        analysis = sim.analyze_results()
+        all_results[scenario_config['scenario_name']] = analysis
+    
+    # Create comparison table
+    comparison_df = pd.DataFrame({
+        name: {
+            'Success Rate': f"{data['mean_success_rate']:.3f} ± {data['std_success_rate']:.3f}",
+            'Detection Rate': f"{data['mean_detection_rate']:.3f}",
+            'Civil Risk': f"{data['mean_civil_risk']:.3f}",
+            'Drones Passed': f"{data['mean_passed']:.1f}",
+            'Missiles Used': f"{data['mean_missiles_used']:.1f}"
+        }
+        for name, data in all_results.items()
+    }).T
+    
+    print("\n" + "="*70)
+    print("COMPARISON TABLE")
+    print("="*70)
+    print(comparison_df)
+    
+    # Save comparison
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    comparison_df.to_csv(f'simulation_results/reports/comparison_{timestamp}.csv')
+    print(f"\n✓ Comparison saved to: simulation_results/reports/comparison_{timestamp}.csv")
+    
+    # Visualization
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig.suptitle('Scenario Comparison', fontsize=16)
+    
+    names = list(all_results.keys())
+    success_rates = [all_results[n]['mean_success_rate'] for n in names]
+    detection_rates = [all_results[n]['mean_detection_rate'] for n in names]
+    civil_risks = [all_results[n]['mean_civil_risk'] for n in names]
+    
+    axes[0].bar(names, success_rates)
+    axes[0].set_ylabel('Mean Success Rate')
+    axes[0].set_title('Success Rate Comparison')
+    axes[0].tick_params(axis='x', rotation=45)
+    
+    axes[1].bar(names, detection_rates)
+    axes[1].set_ylabel('Mean Detection Rate')
+    axes[1].set_title('Detection Rate Comparison')
+    axes[1].tick_params(axis='x', rotation=45)
+    
+    axes[2].bar(names, civil_risks, color='red')
+    axes[2].set_ylabel('Mean Civil Risk')
+    axes[2].set_title('Civil Risk Comparison')
+    axes[2].tick_params(axis='x', rotation=45)
+    
+    plt.tight_layout()
+    plt.savefig(f'simulation_results/figures/comparison_{timestamp}.png', dpi=300)
+    print(f"✓ Comparison plot saved to: simulation_results/figures/comparison_{timestamp}.png")
+    plt.show()
+
+def parameter_sweep(base_config: Dict, param_name: str, param_values: List,
+                   n_iterations: int = 300):
+    """Sweep a parameter and show its effect"""
+    print(f"\n{'='*70}")
+    print(f"PARAMETER SWEEP: {param_name}")
+    print(f"{'='*70}")
+    
+    results = []
+    
+    for value in param_values:
+        config = base_config.copy()
+        config[param_name] = value
+        config['scenario_name'] = f'{param_name}_{value}'
+        
+        sim = MonteCarloSimulation(config, random_seed=42)
+        sim.run_simulation(n_iterations, (50, 150))
+        analysis = sim.analyze_results()
+        
+        results.append({
+            'param_value': value,
+            'success_rate': analysis['mean_success_rate'],
+            'detection_rate': analysis['mean_detection_rate'],
+            'civil_risk': analysis['mean_civil_risk']
+        })
+    
+    df = pd.DataFrame(results)
+    
+    # Plot
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    fig.suptitle(f'Parameter Sweep: {param_name}', fontsize=16)
+    
+    axes[0].plot(df['param_value'], df['success_rate'], marker='o')
+    axes[0].set_xlabel(param_name)
+    axes[0].set_ylabel('Success Rate')
+    axes[0].set_title('Success Rate vs ' + param_name)
+    axes[0].grid(True, alpha=0.3)
+    
+    axes[1].plot(df['param_value'], df['detection_rate'], marker='o', color='orange')
+    axes[1].set_xlabel(param_name)
+    axes[1].set_ylabel('Detection Rate')
+    axes[1].set_title('Detection Rate vs ' + param_name)
+    axes[1].grid(True, alpha=0.3)
+    
+    axes[2].plot(df['param_value'], df['civil_risk'], marker='o', color='red')
+    axes[2].set_xlabel(param_name)
+    axes[2].set_ylabel('Civil Risk')
+    axes[2].set_title('Civil Risk vs ' + param_name)
+    axes[2].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plt.savefig(f'simulation_results/figures/sweep_{param_name}_{timestamp}.png', dpi=300)
+    print(f"✓ Parameter sweep plot saved")
+    plt.show()
+    
+    return df
+
+# ============================================================================
+# EXAMPLE USAGE - GA PROJECT
+# ============================================================================
+
+if __name__ == "__main__":
+    print("\n" + "="*70)
+    print("UAV SWARM DEFENSE - MONTE CARLO SIMULATION")
+    print("Gymnasiearbete Version - Optimized for AI Training")
+    print("="*70 + "\n")
+    
+    # Example 1: Single scenario
+    print("EXAMPLE 1: Running baseline scenario...")
+    config_baseline = {
+        'scenario_name': 'baseline',
+        'num_units': 5,
+        'missiles_per_unit': (5, 15),
+        'priority_strategy': 'most_threat'
+    }
+    
+    sim1 = MonteCarloSimulation(config_baseline, random_seed=42)
+    sim1.run_simulation(n_iterations=1000, n_drones_range=(10, 200))
+    analysis1 = sim1.analyze_results()
+    sim1.save_analysis_report(analysis1)
+    
+    print("\n" + "="*70)
+    print("BASELINE RESULTS:")
+    print("="*70)
+    print(f"Success Rate: {analysis1['mean_success_rate']:.3f} ± {analysis1['std_success_rate']:.3f}")
+    print(f"95% CI: [{analysis1['ci_95_lower']:.3f}, {analysis1['ci_95_upper']:.3f}]")
+    print(f"Detection Rate: {analysis1['mean_detection_rate']:.3f}")
+    print(f"Civil Risk: {analysis1['mean_civil_risk']:.3f}")
+    print("="*70 + "\n")
+    
+    sim1.visualize_results(swedish_labels=False)
+    
+    # Example 2: Compare scenarios
+    print("\nEXAMPLE 2: Comparing different strategies...")
+    scenarios = [
+        {'scenario_name': 'strategy_fastest', 'num_units': 5, 
+         'missiles_per_unit': (5, 15), 'priority_strategy': 'fastest_first'},
+        {'scenario_name': 'strategy_threat', 'num_units': 5, 
+         'missiles_per_unit': (5, 15), 'priority_strategy': 'most_threat'},
+        {'scenario_name': 'strategy_random', 'num_units': 5, 
+         'missiles_per_unit': (5, 15), 'priority_strategy': 'random'}
+    ]
+    
+    compare_scenarios(scenarios, n_iterations=500)
+    
+    # Example 3: Parameter sweep
+    print("\nEXAMPLE 3: Sweeping number of defense units...")
+    base_config = {
+        'scenario_name': 'sweep',
+        'missiles_per_unit': (5, 15),
+        'priority_strategy': 'most_threat'
+    }
+    
+    sweep_df = parameter_sweep(base_config, 'num_units', [2, 4, 6, 8, 10], n_iterations=300)
+    
+    print("\n" + "="*70)
+    print("PARAMETER SWEEP RESULTS:")
+    print("="*70)
+    print(sweep_df)
+    print("="*70)
+    
+    print("\n✓ All simulations complete!")
+    print("\nGenerated files:")
+    print("  - simulation_results/data/        <- CSV data for AI training")
+    print("  - simulation_results/figures/     <- Plots for your report")
+    print("  - simulation_results/reports/     <- Statistical summaries")
+    print("\nNext steps for your GA:")
+    print("  1. Use CSV files in /data folder for AI training (week 9-10)")
+    print("  2. Include figures in your report (background section)")
+    print("  3. Analyze sensitivity results for discussion section")
+    print("="*70 + "\n")

@@ -1,0 +1,9 @@
+{
+  "scenario_name": "strategy_fastest",
+  "num_units": 5,
+  "missiles_per_unit": [
+    5,
+    15
+  ],
+  "priority_strategy": "fastest_first"
+}

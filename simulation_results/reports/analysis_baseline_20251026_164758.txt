@@ -1,0 +1,24 @@
+======================================================================
+MONTE CARLO SIMULATION - ANALYSIS REPORT
+Scenario: baseline
+Generated: 2025-10-26 16:47:58
+======================================================================
+
+Number of iterations: 1000
+
+MAIN RESULTS:
+  Mean Success Rate: 0.111 ± 0.057
+  Median Success Rate: 0.103
+  95% CI: [0.013, 0.239]
+  Mean Detection Rate: 0.329
+  Mean Civil Risk: 0.497
+  Mean Missiles Used: 29.4
+  Mean Drones Passed: 93.0
+
+SENSITIVITY ANALYSIS:  
+  weather_factor: 0.460
+  terrain_factor: 0.255
+  n_drones: 0.207
+  radar_jam: 0.074
+
+======================================================================

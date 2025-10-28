@@ -1,0 +1,425 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from dataclasses import dataclass
+from typing import List, Dict, Tuple
+from scipy import stats
+import pandas as pd
+
+@dataclass
+class Drone:
+    """Individual drone with properties"""
+    id: int
+    speed: float  # km/h
+    stealth: float  # 0.5-0.99
+    accuracy: float  # 0.5-0.99
+    drone_type: str  # light, medium, heavy
+    battery: float  # 0.5-1.0
+    formation: str  # tight, medium, spread
+    ai_behavior: str  # aggressive, evasive, coordinated
+    inertia: float  # 0.1-1.0
+    x: float  # 2D position
+    y: float
+    detected: bool = False
+    intercepted: bool = False
+    time_to_target: float = 0.0
+
+@dataclass
+class DefenseUnit:
+    """Defense system unit"""
+    id: int
+    num_missiles: int
+    response_time: float  # seconds
+    status: str = "online"  # online/offline
+    missiles_remaining: int = 0
+    reload_time: float = 0.0
+    
+    def __post_init__(self):
+        self.missiles_remaining = self.num_missiles
+
+class MonteCarloSimulation:
+    def __init__(self, config: Dict):
+        self.config = config
+        self.results = []
+        
+    def generate_drones(self, n_drones: int) -> List[Drone]:
+        """Generate drone swarm with specified distributions"""
+        drones = []
+        
+        # Drone formation (affects clustering)
+        formation = np.random.choice(['tight', 'medium', 'spread'])
+        
+        for i in range(n_drones):
+            # Speed: Normal distribution μ=60, σ=15
+            speed = np.clip(np.random.normal(60, 15), 40, 100)
+            
+            # Stealth: Beta(2,5)
+            stealth = 0.5 + 0.49 * np.random.beta(2, 5)
+            
+            # Accuracy: Triangular distribution
+            accuracy = np.random.triangular(0.5, 0.75, 0.99)
+            
+            # Drone type
+            drone_type = np.random.choice(['light', 'medium', 'heavy'], 
+                                         p=[0.5, 0.3, 0.2])
+            
+            # Battery status
+            battery = np.random.uniform(0.5, 1.0)
+            
+            # AI behavior
+            ai_behavior = np.random.choice(['aggressive', 'evasive', 'coordinated'])
+            
+            # Inertia factor
+            inertia = np.random.uniform(0.1, 1.0)
+            
+            # 2D position (starting positions based on formation)
+            if formation == 'tight':
+                x = np.random.normal(0, 20)
+                y = np.random.normal(0, 20)
+            elif formation == 'medium':
+                x = np.random.normal(0, 50)
+                y = np.random.normal(0, 50)
+            else:  # spread
+                x = np.random.uniform(-100, 100)
+                y = np.random.uniform(-100, 100)
+            
+            # Time to target: Normal distribution 5-60s
+            time_to_target = np.clip(np.random.normal(30, 15), 5, 60)
+            
+            # Adjust speed and accuracy based on battery
+            speed *= battery
+            accuracy *= battery
+            
+            drone = Drone(i, speed, stealth, accuracy, drone_type, battery,
+                         formation, ai_behavior, inertia, x, y,
+                         time_to_target=time_to_target)
+            drones.append(drone)
+            
+        return drones
+    
+    def generate_defense_units(self) -> List[DefenseUnit]:
+        """Generate defense units"""
+        units = []
+        num_units = self.config['num_units']
+        
+        for i in range(num_units):
+            num_missiles = np.random.randint(
+                self.config['missiles_per_unit'][0],
+                self.config['missiles_per_unit'][1] + 1
+            )
+            
+            response_time = np.random.uniform(0.5, 5.0)
+            
+            # 5-10% risk of unit being offline
+            status = "offline" if np.random.random() < 0.075 else "online"
+            
+            units.append(DefenseUnit(i, num_missiles, response_time, status))
+            
+        return units
+    
+    def calculate_detection_probability(self, drone: Drone, 
+                                       env_factors: Dict) -> float:
+        """Calculate detection probability with all modifiers"""
+        # Base detection capability: Log-normal or Beta
+        base_p = 0.6 + 0.39 * np.random.beta(5, 2)
+        
+        # Modify by drone stealth
+        p_detect = base_p * (1 - drone.stealth * 0.3)
+        
+        # Weather factor
+        p_detect *= env_factors['weather_factor']
+        
+        # Terrain factor
+        p_detect *= env_factors['terrain_factor']
+        
+        # Radar interference
+        p_detect *= (1 - env_factors['radar_jam'])
+        
+        # Temperature/environment effect
+        p_detect *= env_factors['temp_factor']
+        
+        # Low signature radar capability
+        if drone.stealth > 0.8:
+            p_detect *= env_factors['low_sig_radar']
+        
+        # Communication jamming affects coordination
+        p_detect *= (1 - env_factors['comm_jam_level'] * 0.2)
+        
+        return np.clip(p_detect, 0, 0.99)
+    
+    def calculate_intercept_probability(self, drone: Drone, 
+                                       env_factors: Dict) -> float:
+        """Calculate interception probability"""
+        # Base intercept capability
+        base_p = 0.5 + 0.49 * np.random.beta(5, 2)
+        
+        # Modify by drone speed (faster = harder to intercept)
+        speed_factor = 1 - (drone.speed - 40) / (100 - 40) * 0.3
+        
+        # Modify by stealth
+        stealth_factor = 1 - drone.stealth * 0.2
+        
+        # Modify by inertia (lower inertia = easier to intercept)
+        inertia_factor = 1 - drone.inertia * 0.15
+        
+        # AI behavior affects intercept difficulty
+        if drone.ai_behavior == 'evasive':
+            behavior_factor = 0.7
+        elif drone.ai_behavior == 'aggressive':
+            behavior_factor = 0.9
+        else:  # coordinated
+            behavior_factor = 0.8
+        
+        p_intercept = base_p * speed_factor * stealth_factor * behavior_factor * inertia_factor
+        
+        # Environmental factors
+        p_intercept *= env_factors['weather_factor']
+        p_intercept *= env_factors['temp_factor']
+        
+        # Resource failure
+        if np.random.random() < env_factors['resource_failure']:
+            p_intercept = 0
+        
+        return np.clip(p_intercept, 0, 0.99)
+    
+    def generate_environmental_factors(self) -> Dict:
+        """Generate environmental conditions for scenario"""
+        return {
+            'weather_factor': np.random.uniform(0.6, 1.0),
+            'terrain_factor': np.random.uniform(0.5, 1.0),
+            'radar_jam': np.random.beta(2, 5) * 0.3,
+            'comm_jam_level': np.random.beta(2, 5),
+            'comm_delay': np.random.uniform(0, 2),
+            'temp_factor': np.random.beta(5, 2) * 0.3 + 0.7,
+            'low_sig_radar': np.random.uniform(0.6, 1.0),
+            'system_latency': np.random.uniform(0, 2),
+            'resource_failure': 0.05  # 5% chance of missile failure
+        }
+    
+    def prioritize_targets(self, drones: List[Drone], 
+                          strategy: str) -> List[Drone]:
+        """Prioritize which drones to engage first"""
+        if strategy == 'fastest_first':
+            return sorted(drones, key=lambda d: d.speed, reverse=True)
+        elif strategy == 'most_threat':
+            # Threat based on speed, accuracy, and type
+            threat_scores = []
+            for d in drones:
+                threat = d.speed * 0.3 + d.accuracy * 0.5
+                if d.drone_type == 'heavy':
+                    threat *= 1.5
+                elif d.drone_type == 'medium':
+                    threat *= 1.2
+                threat_scores.append((d, threat))
+            return [d for d, _ in sorted(threat_scores, 
+                                        key=lambda x: x[1], reverse=True)]
+        else:  # random
+            np.random.shuffle(drones)
+            return drones
+    
+    def run_single_scenario(self, n_drones: int) -> Dict:
+        """Run one Monte Carlo iteration"""
+        # Generate scenario
+        drones = self.generate_drones(n_drones)
+        units = self.generate_defense_units()
+        env_factors = self.generate_environmental_factors()
+        
+        # Detection phase
+        for drone in drones:
+            p_detect = self.calculate_detection_probability(drone, env_factors)
+            drone.detected = np.random.random() < p_detect
+        
+        detected_drones = [d for d in drones if d.detected]
+        
+        # Prioritization
+        strategy = self.config['priority_strategy']
+        prioritized_drones = self.prioritize_targets(detected_drones, strategy)
+        
+        # Interception phase
+        total_missiles = sum(u.missiles_remaining for u in units if u.status == "online")
+        intercepted_count = 0
+        
+        for drone in prioritized_drones:
+            if total_missiles <= 0:
+                break
+                
+            # Find available unit
+            available_unit = None
+            for unit in units:
+                if unit.status == "online" and unit.missiles_remaining > 0:
+                    available_unit = unit
+                    break
+            
+            if available_unit is None:
+                break
+            
+            # Calculate intercept probability
+            p_intercept = self.calculate_intercept_probability(drone, env_factors)
+            
+            # Attempt interception
+            if np.random.random() < p_intercept:
+                drone.intercepted = True
+                intercepted_count += 1
+            
+            # Use missile
+            available_unit.missiles_remaining -= 1
+            total_missiles -= 1
+        
+        # Calculate results
+        num_intercepted = sum(1 for d in drones if d.intercepted)
+        num_passed = n_drones - num_intercepted
+        success_rate = num_intercepted / n_drones if n_drones > 0 else 0
+        
+        # Calculate risk to targets
+        passed_drones = [d for d in drones if not d.intercepted]
+        civil_risk = sum(d.accuracy for d in passed_drones) / n_drones if n_drones > 0 else 0
+        
+        missiles_used = sum(u.num_missiles - u.missiles_remaining for u in units)
+        
+        return {
+            'n_drones': n_drones,
+            'num_detected': len(detected_drones),
+            'num_intercepted': num_intercepted,
+            'num_passed': num_passed,
+            'success_rate': success_rate,
+            'civil_risk': civil_risk,
+            'missiles_used': missiles_used,
+            'detection_rate': len(detected_drones) / n_drones if n_drones > 0 else 0,
+            'weather_factor': env_factors['weather_factor'],
+            'terrain_factor': env_factors['terrain_factor'],
+            'strategy': strategy
+        }
+    
+    def run_simulation(self, n_iterations: int, n_drones_range: Tuple[int, int]):
+        """Run full Monte Carlo simulation"""
+        print(f"Running {n_iterations} Monte Carlo iterations...")
+        
+        for i in range(n_iterations):
+            # Vary number of drones
+            n_drones = np.random.randint(n_drones_range[0], n_drones_range[1] + 1)
+            
+            result = self.run_single_scenario(n_drones)
+            self.results.append(result)
+            
+            if (i + 1) % 100 == 0:
+                print(f"Completed {i + 1}/{n_iterations} iterations")
+        
+        print("Simulation complete!")
+    
+    def analyze_results(self) -> Dict:
+        """Statistical analysis of results"""
+        df = pd.DataFrame(self.results)
+        
+        analysis = {
+            'mean_success_rate': df['success_rate'].mean(),
+            'std_success_rate': df['success_rate'].std(),
+            'ci_95_lower': df['success_rate'].quantile(0.025),
+            'ci_95_upper': df['success_rate'].quantile(0.975),
+            'mean_detection_rate': df['detection_rate'].mean(),
+            'mean_civil_risk': df['civil_risk'].mean(),
+            'mean_missiles_used': df['missiles_used'].mean(),
+            'mean_passed': df['num_passed'].mean(),
+        }
+        
+        # Sensitivity analysis - correlation with success rate
+        sensitivity = {}
+        for col in ['weather_factor', 'terrain_factor', 'n_drones']:
+            if col in df.columns:
+                corr = df[col].corr(df['success_rate'])
+                sensitivity[col] = abs(corr)
+        
+        analysis['sensitivity'] = sensitivity
+        
+        return analysis
+    
+    def visualize_results(self):
+        """Create visualizations"""
+        df = pd.DataFrame(self.results)
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        fig.suptitle('UAV Swarm Defense - Monte Carlo Simulation Results', fontsize=16)
+        
+        # 1. Success rate distribution
+        axes[0, 0].hist(df['success_rate'], bins=30, edgecolor='black', alpha=0.7)
+        axes[0, 0].set_xlabel('Success Rate')
+        axes[0, 0].set_ylabel('Frequency')
+        axes[0, 0].set_title('Distribution of Success Rates')
+        axes[0, 0].axvline(df['success_rate'].mean(), color='r', 
+                          linestyle='--', label=f'Mean: {df["success_rate"].mean():.3f}')
+        axes[0, 0].legend()
+        
+        # 2. Success rate vs number of drones
+        axes[0, 1].scatter(df['n_drones'], df['success_rate'], alpha=0.5)
+        axes[0, 1].set_xlabel('Number of Drones')
+        axes[0, 1].set_ylabel('Success Rate')
+        axes[0, 1].set_title('Success Rate vs Swarm Size')
+        
+        # 3. Detection rate vs success rate
+        axes[0, 2].scatter(df['detection_rate'], df['success_rate'], alpha=0.5)
+        axes[0, 2].set_xlabel('Detection Rate')
+        axes[0, 2].set_ylabel('Success Rate')
+        axes[0, 2].set_title('Detection vs Success Rate')
+        
+        # 4. Environmental factors impact
+        weather_bins = pd.cut(df['weather_factor'], bins=5)
+        success_by_weather = df.groupby(weather_bins)['success_rate'].mean()
+        axes[1, 0].bar(range(len(success_by_weather)), success_by_weather.values)
+        axes[1, 0].set_xlabel('Weather Factor (binned)')
+        axes[1, 0].set_ylabel('Mean Success Rate')
+        axes[1, 0].set_title('Weather Impact on Success')
+        
+        # 5. Missiles used distribution
+        axes[1, 1].hist(df['missiles_used'], bins=20, edgecolor='black', alpha=0.7)
+        axes[1, 1].set_xlabel('Missiles Used')
+        axes[1, 1].set_ylabel('Frequency')
+        axes[1, 1].set_title('Missile Usage Distribution')
+        
+        # 6. Civil risk distribution
+        axes[1, 2].hist(df['civil_risk'], bins=20, edgecolor='black', alpha=0.7, color='red')
+        axes[1, 2].set_xlabel('Civil Risk Score')
+        axes[1, 2].set_ylabel('Frequency')
+        axes[1, 2].set_title('Civil Risk Distribution')
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Heatmap of correlations
+        fig2, ax = plt.subplots(figsize=(10, 8))
+        numeric_cols = ['n_drones', 'detection_rate', 'success_rate', 
+                       'weather_factor', 'terrain_factor', 'missiles_used', 'civil_risk']
+        corr_matrix = df[numeric_cols].corr()
+        sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm', 
+                   center=0, ax=ax)
+        ax.set_title('Correlation Matrix of Key Variables')
+        plt.tight_layout()
+        plt.show()
+
+# Configuration
+config = {
+    'num_units': 5,
+    'missiles_per_unit': (5, 15),
+    'priority_strategy': 'most_threat'  # 'fastest_first', 'most_threat', 'random'
+}
+
+# Run simulation
+sim = MonteCarloSimulation(config)
+sim.run_simulation(n_iterations=1000, n_drones_range=(10, 200))
+
+# Analyze and visualize
+analysis = sim.analyze_results()
+
+print("\n" + "="*60)
+print("STATISTICAL ANALYSIS RESULTS")
+print("="*60)
+print(f"Mean Success Rate: {analysis['mean_success_rate']:.3f} ± {analysis['std_success_rate']:.3f}")
+print(f"95% Confidence Interval: [{analysis['ci_95_lower']:.3f}, {analysis['ci_95_upper']:.3f}]")
+print(f"Mean Detection Rate: {analysis['mean_detection_rate']:.3f}")
+print(f"Mean Civil Risk: {analysis['mean_civil_risk']:.3f}")
+print(f"Mean Missiles Used: {analysis['mean_missiles_used']:.1f}")
+print(f"Mean Drones Passed: {analysis['mean_passed']:.1f}")
+print("\nSensitivity Analysis (correlation with success rate):")
+for var, sens in analysis['sensitivity'].items():
+    print(f"  {var}: {sens:.3f}")
+print("="*60)
+
+sim.visualize_results()
