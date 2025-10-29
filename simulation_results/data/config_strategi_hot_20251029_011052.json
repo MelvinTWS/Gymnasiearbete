@@ -1,0 +1,62 @@
+{
+  "scenario_name": "strategi_hot",
+  "random_seed": 42,
+  "num_units": 5,
+  "missiles_per_unit": [
+    5,
+    15
+  ],
+  "priority_strategy": "most_threat",
+  "layered_defense": [],
+  "terrain_factor": 0.75,
+  "drone_type_modifiers": {
+    "light": {
+      "stealth": 1.2,
+      "speed": 1.1,
+      "threat": 1.0
+    },
+    "medium": {
+      "stealth": 1.0,
+      "speed": 1.0,
+      "threat": 1.2
+    },
+    "heavy": {
+      "stealth": 0.8,
+      "speed": 0.85,
+      "threat": 1.5
+    }
+  },
+  "formation_effects": {
+    "tight": {
+      "detection_modifier": 0.9,
+      "max_parallel": 1
+    },
+    "medium": {
+      "detection_modifier": 1.0,
+      "max_parallel": 2
+    },
+    "spread": {
+      "detection_modifier": 1.1,
+      "max_parallel": 3
+    }
+  },
+  "layered_defense_specs": {
+    "long_range": {
+      "p_detect": 0.7,
+      "p_intercept": 0.6
+    },
+    "medium_range": {
+      "p_detect": 0.8,
+      "p_intercept": 0.75
+    },
+    "short_range": {
+      "p_detect": 0.9,
+      "p_intercept": 0.85
+    }
+  },
+  "ai_behavior_modifiers": {
+    "aggressive": 0.9,
+    "evasive": 0.7,
+    "coordinated": 0.8
+  }
+}
