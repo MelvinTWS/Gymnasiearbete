@@ -58,6 +58,8 @@ class MonteCarloSimulation:
         self.config = config
         self.results = []
         self.scenario_name = config.get('scenario_name', 'default')
+        # Bas-outputkatalog per scenario (separerar tester så de inte blandas)
+        self.output_base = os.path.join('simulation_results', str(self.scenario_name))
         
         # Sätt random seed för reproducerbarhet
         if config.get('random_seed') is not None:
@@ -68,9 +70,10 @@ class MonteCarloSimulation:
         
     def create_output_dirs(self):
         """Skapa mappar för resultat"""
-        os.makedirs('simulation_results/data', exist_ok=True)
-        os.makedirs('simulation_results/figures', exist_ok=True)
-        os.makedirs('simulation_results/reports', exist_ok=True)
+        # Skapa per-scenario mappar: simulation_results/<scenario_name>/{data,figures,reports}
+        os.makedirs(os.path.join(self.output_base, 'data'), exist_ok=True)
+        os.makedirs(os.path.join(self.output_base, 'figures'), exist_ok=True)
+        os.makedirs(os.path.join(self.output_base, 'reports'), exist_ok=True)
     
     def generate_drones(self, n_drones: int) -> List[Drone]:
         """
@@ -174,10 +177,10 @@ class MonteCarloSimulation:
         - Temperatur: Beta → 0.7-1.0
         - System latens: Uniform(0, 2) sekunder
         """
+        
         return {
             'weather_factor': np.random.uniform(0.6, 1.0),
-            'terrain_factor': self.config.get('terrain_factor', 
-                                             np.random.uniform(0.5, 1.0)),
+            'terrain_factor': np.random.uniform(0.5, 1.0),
             'radar_jam': np.random.beta(2, 5) * 0.3,
             'comm_jam_level': np.random.beta(2, 5),
             'temp_factor': np.random.beta(5, 2) * 0.3 + 0.7,
@@ -430,6 +433,9 @@ class MonteCarloSimulation:
             
             # Kör scenario
             result = self.run_single_scenario(n_drones)
+            # Lägg till meta-data så raderna kan grupperas/filtreras senare
+            result['scenario_name'] = self.scenario_name
+            result['iteration'] = i + 1
             self.results.append(result)
             
             # Progress update
@@ -446,18 +452,21 @@ class MonteCarloSimulation:
         """Spara simuleringsresultat till CSV för AI-träning"""
         df = pd.DataFrame(self.results)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Spara data
-        filename = f'simulation_results/data/{self.scenario_name}_{timestamp}.csv'
+        # Spara data i per-scenario data-mapp
+        data_dir = os.path.join(self.output_base, 'data')
+
+        filename = os.path.join(data_dir, f'{self.scenario_name}_{timestamp}.csv')
         df.to_csv(filename, index=False)
         print(f"✓ Data sparad: {filename}")
-        
-        # Spara konfiguration
-        config_file = f'simulation_results/data/config_{self.scenario_name}_{timestamp}.json'
+
+        # Spara konfiguration i per-scenario data-mapp
+        config_file = os.path.join(self.output_base, 'data', f'config_{self.scenario_name}_{timestamp}.json')
         config_save = self.config.copy()
         # Konvertera tuple till list för JSON
         if 'missiles_per_unit' in config_save:
             config_save['missiles_per_unit'] = list(config_save['missiles_per_unit'])
+        if 'terrain_factor_range' in config_save:
+            config_save['terrain_factor_range'] = list(config_save['terrain_factor_range'])
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config_save, f, indent=2, ensure_ascii=False)
         print(f"✓ Konfiguration sparad: {config_file}")
@@ -509,7 +518,7 @@ class MonteCarloSimulation:
     def save_analysis_report(self, analysis: Dict):
         """Spara analysrapport som textfil"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f'simulation_results/reports/analys_{self.scenario_name}_{timestamp}.txt'
+        filename = os.path.join(self.output_base, 'reports', f'analys_{self.scenario_name}_{timestamp}.txt')
         
         with open(filename, 'w', encoding='utf-8') as f:
             f.write("="*70 + "\n")
@@ -620,7 +629,7 @@ class MonteCarloSimulation:
         axes[1, 2].set_title(f'{labels["civil_risk"]} - Fördelning')
         
         plt.tight_layout()
-        filename = f'simulation_results/figures/oversikt_{self.scenario_name}_{timestamp}.png'
+        filename = os.path.join(self.output_base, 'figures', f'oversikt_{self.scenario_name}_{timestamp}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"✓ Översiktsplot sparad: {filename}")
         plt.show()
@@ -634,7 +643,7 @@ class MonteCarloSimulation:
                    center=0, ax=ax)
         ax.set_title(f'Korrelationsmatris: {self.scenario_name}')
         plt.tight_layout()
-        filename = f'simulation_results/figures/korrelation_{self.scenario_name}_{timestamp}.png'
+        filename = os.path.join(self.output_base, 'figures', f'korrelation_{self.scenario_name}_{timestamp}.png')
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         print(f"✓ Korrelationsheatmap sparad: {filename}")
         plt.show()
@@ -655,6 +664,7 @@ def compare_scenarios(scenarios: List[Dict], n_iterations: int = 500,
     print("="*70)
     
     all_results = {}
+    num_units_set = set()
     
     for scenario_config in scenarios:
         # Kör simulering för varje scenario
@@ -662,16 +672,31 @@ def compare_scenarios(scenarios: List[Dict], n_iterations: int = 500,
         sim.run_simulation(n_iterations, n_drones_range)
         analysis = sim.analyze_results()
         all_results[scenario_config['scenario_name']] = analysis
+        # Track if scenarios differ by num_units so we can decide whether to
+        # include detection_rate in the comparison (detection is independent
+        # from number of defence units and can add noise when sweeping units).
+        num_units_set.add(scenario_config.get('num_units', DEFAULT_CONFIG.get('num_units')))
     
     # Skapa jämförelsetabell
-    comparison_df = pd.DataFrame({
-        name: {
+    include_detection = True
+    # If scenarios vary by number of units, omit detection_rate from the
+    # comparison to avoid showing an unrelated metric
+    if len(num_units_set) > 1:
+        include_detection = False
+
+    def _row_for(data, include_detection: bool):
+        row = {
             'Success Rate': f"{data['mean_success_rate']:.3f} ± {data['std_success_rate']:.3f}",
-            'Detection Rate': f"{data['mean_detection_rate']:.3f}",
             'Civil Risk': f"{data['mean_civil_risk']:.3f}",
             'Drönare Passerade': f"{data['mean_passed']:.1f}",
             'Missiler Använda': f"{data['mean_missiles_used']:.1f}"
         }
+        if include_detection:
+            row['Detection Rate'] = f"{data['mean_detection_rate']:.3f}"
+        return row
+
+    comparison_df = pd.DataFrame({
+        name: _row_for(data, include_detection)
         for name, data in all_results.items()
     }).T
     
@@ -682,6 +707,11 @@ def compare_scenarios(scenarios: List[Dict], n_iterations: int = 500,
     
     # Spara jämförelse
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Ensure top-level result directories exist (some flows use per-scenario dirs,
+    # but compare_scenarios writes to the shared reports/ and figures/ folders)
+    os.makedirs(os.path.join('simulation_results', 'reports'), exist_ok=True)
+    os.makedirs(os.path.join('simulation_results', 'figures'), exist_ok=True)
+
     comparison_df.to_csv(f'simulation_results/reports/jamforelse_{timestamp}.csv')
     print(f"\n✓ Jämförelse sparad: simulation_results/reports/jamforelse_{timestamp}.csv")
     
@@ -710,6 +740,8 @@ def compare_scenarios(scenarios: List[Dict], n_iterations: int = 500,
     axes[2].tick_params(axis='x', rotation=45)
     
     plt.tight_layout()
+    # Ensure figures directory exists (defensive)
+    os.makedirs(os.path.join('simulation_results', 'figures'), exist_ok=True)
     plt.savefig(f'simulation_results/figures/jamforelse_{timestamp}.png', dpi=300)
     print(f"✓ Jämförelseplot sparad: simulation_results/figures/jamforelse_{timestamp}.png")
     plt.show()
@@ -742,40 +774,45 @@ def parameter_sweep(base_config: Dict, param_name: str, param_values: List,
         sim.run_simulation(n_iterations, (50, 150))
         analysis = sim.analyze_results()
         
-        results.append({
+        row = {
             'param_value': value,
             'success_rate': analysis['mean_success_rate'],
-            'detection_rate': analysis['mean_detection_rate'],
             'civil_risk': analysis['mean_civil_risk']
-        })
+        }
+        # When sweeping number of defence units, detection_rate is not
+        # informative (it depends on sensors/environment, not unit count).
+        # Omit it to reduce noise in the result.
+        if param_name != 'num_units':
+            row['detection_rate'] = analysis['mean_detection_rate']
+
+        results.append(row)
     
     df = pd.DataFrame(results)
     
-    # Plotta
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    # Plotta dynamically based on which metrics are present (detection_rate
+    # may be omitted when sweeping num_units)
+    metrics = ['success_rate', 'detection_rate', 'civil_risk']
+    metrics = [m for m in metrics if m in df.columns]
+
+    n = len(metrics)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4))
+    if n == 1:
+        axes = [axes]
     fig.suptitle(f'Parametersweep: {param_name}', fontsize=16)
-    
-    axes[0].plot(df['param_value'], df['success_rate'], marker='o', linewidth=2)
-    axes[0].set_xlabel(param_name)
-    axes[0].set_ylabel('Success Rate')
-    axes[0].set_title(f'Success Rate vs {param_name}')
-    axes[0].grid(True, alpha=0.3)
-    
-    axes[1].plot(df['param_value'], df['detection_rate'], marker='o', 
-                linewidth=2, color='orange')
-    axes[1].set_xlabel(param_name)
-    axes[1].set_ylabel('Detection Rate')
-    axes[1].set_title(f'Detection Rate vs {param_name}')
-    axes[1].grid(True, alpha=0.3)
-    
-    axes[2].plot(df['param_value'], df['civil_risk'], marker='o', 
-                linewidth=2, color='red')
-    axes[2].set_xlabel(param_name)
-    axes[2].set_ylabel('Civil Risk')
-    axes[2].set_title(f'Civil Risk vs {param_name}')
-    axes[2].grid(True, alpha=0.3)
+
+    for ax, metric in zip(axes, metrics):
+        ax.plot(df['param_value'], df[metric], marker='o', linewidth=2,
+                color='orange' if metric == 'detection_rate' else ('red' if metric == 'civil_risk' else 'blue'))
+        ax.set_xlabel(param_name)
+        ylabel = ' '.join(metric.split('_')).title()
+        ax.set_ylabel(ylabel)
+        ax.set_title(f'{ylabel} vs {param_name}')
+        ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
+    plt.tight_layout()
+    # Ensure figures directory exists before saving
+    os.makedirs(os.path.join('simulation_results', 'figures'), exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     plt.savefig(f'simulation_results/figures/sweep_{param_name}_{timestamp}.png', dpi=300)
     print(f"\n✓ Parametersweep plot sparad")
@@ -791,7 +828,8 @@ def parameter_sweep(base_config: Dict, param_name: str, param_values: List,
 DEFAULT_CONFIG = {
     # Scenario info
     'scenario_name': 'baseline',
-    'random_seed': 42,
+    # Default: no fixed seed so separate runs produce different random outcomes
+    'random_seed': None,
     
     # Försvarssystem
     'num_units': 5,
@@ -800,9 +838,6 @@ DEFAULT_CONFIG = {
     
     # Multilayer defense (tom lista = inaktiverad)
     'layered_defense': [],  # Eller: ['long_range', 'medium_range', 'short_range']
-    
-    # Terräng (konstant)
-    'terrain_factor': 0.75,
     
     # Drone type modifiers (enligt dokumentet)
     'drone_type_modifiers': {
