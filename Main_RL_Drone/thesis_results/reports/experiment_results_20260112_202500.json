@@ -1,0 +1,56 @@
+{
+  "timestamp": "20260112_202500",
+  "config": {
+    "training_timesteps": 50000,
+    "eval_scenarios": 1000,
+    "random_seed": 42
+  },
+  "directories": {
+    "base": "thesis_results",
+    "models": "thesis_results\\trained_models",
+    "training": "thesis_results\\training_metrics",
+    "evaluation": "thesis_results\\evaluation_results",
+    "analysis": "thesis_results\\statistical_analysis",
+    "figures": "thesis_results\\visualizations",
+    "reports": "thesis_results\\reports"
+  },
+  "files": {
+    "model": "thesis_results\\trained_models\\dqn_agent_20260112_202500_final",
+    "training_metrics": "thesis_results\\training_metrics\\training_metrics_20260112_202500.csv",
+    "baseline_results": "thesis_results\\evaluation_results\\baseline_results_20260112_202500.csv",
+    "rl_results": "thesis_results\\evaluation_results\\rl_results_20260112_202500.csv",
+    "interpretation": "thesis_results\\reports\\interpretation_20260112_202500.txt",
+    "visualizations": {
+      "penetration_comparison": "thesis_results\\visualizations\\penetration_comparison_20260112_202620.png",
+      "cost_exchange_comparison": "thesis_results\\visualizations\\cost_exchange_comparison_20260112_202620.png",
+      "cost_vs_penetration": "thesis_results\\visualizations\\cost_vs_penetration_20260112_202620.png",
+      "weapon_usage": "thesis_results\\visualizations\\weapon_usage_20260112_202620.png",
+      "comprehensive_comparison": "thesis_results\\visualizations\\comprehensive_comparison_20260112_202620.png",
+      "training_metrics": "thesis_results\\visualizations\\training_metrics_20260112_202620.png"
+    },
+    "summary": "thesis_results\\reports\\experiment_summary_20260112_202500.txt"
+  },
+  "metrics": {
+    "baseline": {
+      "penetration_rate": 0.9439440487901327,
+      "cost_exchange_ratio": 26.992675596350146,
+      "total_cost": 287082000.0,
+      "uavs_destroyed": 14.032
+    },
+    "rl": {
+      "penetration_rate": 0.9977704262536693,
+      "cost_exchange_ratio": 28.548216632881058,
+      "total_cost": 300705360.0,
+      "uavs_destroyed": 0.556
+    },
+    "training_episodes": 2500
+  },
+  "timings": {
+    "training": 70.97492957115173,
+    "baseline_eval": 0.9357078075408936,
+    "rl_eval": 7.7381508350372314,
+    "statistical_analysis": 0.023263931274414062,
+    "visualization": 5.139489650726318,
+    "total": 84.82760238647461
+  }
+}

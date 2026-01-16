@@ -1,9 +1,0 @@
-{
-  "scenario_name": "num_units_4",
-  "missiles_per_unit": [
-    5,
-    15
-  ],
-  "priority_strategy": "most_threat",
-  "num_units": 4
-}

@@ -1,4 +1,0 @@
-,Success Rate,Detection Rate,Civil Risk,Drones Passed,Missiles Used
-strategy_fastest,0.111 ± 0.058,0.328,0.497,90.9,28.8
-strategy_threat,0.110 ± 0.056,0.328,0.497,90.9,28.8
-strategy_random,0.114 ± 0.060,0.331,0.498,92.4,29.3

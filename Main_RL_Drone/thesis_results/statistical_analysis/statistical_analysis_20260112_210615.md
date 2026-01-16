@@ -1,0 +1,19 @@
+
+## Statistical Analysis Summary
+
+| Metric | Baseline Mean | RL Mean | p-value | Significant | Effect Size |
+|--------|---------------|---------|---------|-------------|-------------|
+| Penetration Rate | 94.39% | 94.44% | 0.344707 | NO | -0.018 |
+| Cost-Exchange Ratio | $0.00M | $0.00M | 0.275638 | NO | -0.027 |
+| Total Cost | $287.08M | $287.30M | 0.483489 | NO | -0.002 |
+| Defense Cost | $0.20M | $0.25M | <0.001 | YES | -0.334 |
+| Penetration Cost | $286.88M | $287.04M | 0.487718 | NO | -0.001 |
+| UAVs Destroyed | 14.03 | 13.87 | 0.043699 | YES | 0.076 |
+| UAVs Penetrated | 28688.20% | 28704.10% | 0.487718 | NO | -0.001 |
+| Kinetic Missiles Fired | 0.00 | 0.06 | <0.001 | YES | -0.338 |
+| Directed Energy Fired | 20.00 | 19.88 | <0.001 | YES | 0.496 |
+
+**Notes:**
+- Significance level (α): 0.05
+- Sample size: 1000 scenarios per strategy
+- Effect size is Cohen's d (small: 0.2, medium: 0.5, large: 0.8)

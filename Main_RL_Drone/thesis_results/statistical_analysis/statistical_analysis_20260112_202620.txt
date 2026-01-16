@@ -1,0 +1,24 @@
+
+====================================================================================================
+STATISTICAL ANALYSIS SUMMARY
+====================================================================================================
+
+Metric                           Baseline Mean         RL Mean      p-value   Sig.  Effect Size
+----------------------------------------------------------------------------------------------------
+Penetration Rate                        94.39%          99.78%       <0.001    YES       -2.661
+Cost-Exchange Ratio            $         0.00M $         0.00M       <0.001    YES       -2.735
+Total Cost                     $       287.08M $       300.71M     0.004181    YES       -0.118
+Defense Cost                   $         0.20M $         0.35M       <0.001    YES       -0.370
+Penetration Cost               $       286.88M $       300.36M     0.004549    YES       -0.117
+UAVs Destroyed                           14.03            0.56       <0.001    YES        8.616
+UAVs Penetrated                      28688.20%       30035.80%     0.004549    YES       -0.117
+Kinetic Missiles Fired                    0.00            0.34       <0.001    YES       -0.863
+Directed Energy Fired                    20.00            0.34       <0.001    YES       48.748
+====================================================================================================
+
+Notes:
+  - Significance level (alpha): 0.05
+  - Number of scenarios: 1000
+  - Effect size is Cohen's d (small: 0.2, medium: 0.5, large: 0.8)
+  - 'Sig.' indicates statistical significance at specified alpha level
+====================================================================================================

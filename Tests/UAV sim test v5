@@ -1,0 +1,776 @@
+"""
+Monte Carlo Dataset Generator - Luftförsvar mot Drönarsvärmar
+Ombyggd för enkel användning och omfattande datagenerering
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from itertools import product
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================================================
+# INPUT-VARIABLER - ÄNDRA DESSA EFTER BEHOV
+# ============================================================================
+
+### GRUNDINSTÄLLNINGAR ###
+NUM_ROWS = 1000  # Antal rader att generera (max)
+RANDOM_SEED = 42  # Slumpfrö för reproducerbarhet (None = ingen fixerad seed)
+OUTPUT_FILENAME = "generated_data.csv"  # Namn på output-fil
+
+### DRÖNARVARIABLER - INTERVALL ###
+# Antal drönare (Normal scenarios)
+N_DRONES_MIN = 10
+N_DRONES_MAX = 200
+
+# Stress test scenarios (5% of data will be stress tests with high drone counts)
+STRESS_TEST_PROB = 0.05  # 5% stress tests
+STRESS_TEST_DRONES_MIN = 300
+STRESS_TEST_DRONES_MAX = 500
+
+# Drönarhastighet (km/h)
+DRONE_SPEED_MEAN = 60
+DRONE_SPEED_STD = 15
+DRONE_SPEED_MIN = 40
+DRONE_SPEED_MAX = 100
+
+# Stealth-faktor (0-1, där högre = svårare att upptäcka)
+STEALTH_MIN = 0.5
+STEALTH_MAX = 0.99
+
+# Precision (0-1, där högre = mer träffsäker)
+ACCURACY_MIN = 0.5
+ACCURACY_MAX = 0.99
+
+# Drönarklass - sannolikheter (måste summera till 1.0)
+DRONE_TYPE_PROBS = {
+    'light': 0.5,
+    'medium': 0.3,
+    'heavy': 0.2
+}
+
+# Formation - sannolikheter (måste summera till 1.0)
+FORMATION_PROBS = {
+    'tight': 0.33,
+    'medium': 0.34,
+    'spread': 0.33
+}
+
+# AI-beteende - sannolikheter (måste summera till 1.0)
+AI_BEHAVIOR_PROBS = {
+    'aggressive': 0.33,
+    'evasive': 0.34,
+    'coordinated': 0.33
+}
+
+# Tröghetsfaktor
+INERTIA_MIN = 0.1
+INERTIA_MAX = 1.0
+
+### FÖRSVARSVARIABLER - INTERVALL ###
+# Antal försvarsenheter
+NUM_UNITS_MIN = 2
+NUM_UNITS_MAX = 10
+
+# Missiler per enhet (normal)
+MISSILES_PER_UNIT_MIN = 5
+MISSILES_PER_UNIT_MAX = 15
+
+# Missiler per enhet (high capacity variant - 50% probability)
+MISSILES_PER_UNIT_HIGH_MIN = 10
+MISSILES_PER_UNIT_HIGH_MAX = 20
+USE_HIGH_CAPACITY_PROB = 0.5  # 50% use high capacity
+
+# Responstid (sekunder)
+RESPONSE_TIME_MIN = 0.5
+RESPONSE_TIME_MAX = 5.0
+
+# Sannolikhet att enhet är offline
+UNIT_OFFLINE_PROB = 0.075
+
+# Prioriteringsstrategi - sannolikheter
+PRIORITY_STRATEGY_PROBS = {
+    'fastest_first': 0.33,
+    'most_threat': 0.34,
+    'random': 0.33
+}
+
+# Multilayer defense - sannolikhet att använda (0 = ingen, 1 = alltid)
+USE_MULTILAYER_PROB = 0.3  # 30% av scenarierna använder multilayer
+
+# Multilayer defense specifikationer
+LAYERED_DEFENSE_SPECS = {
+    'long_range': {'p_detect': 0.7, 'p_intercept': 0.6},
+    'medium_range': {'p_detect': 0.8, 'p_intercept': 0.75},
+    'short_range': {'p_detect': 0.9, 'p_intercept': 0.85}
+}
+
+### MILJÖVARIABLER - INTERVALL ###
+# Väderfaktor (0-1, där 1 = perfekt väder)
+WEATHER_FACTOR_MIN = 0.6
+WEATHER_FACTOR_MAX = 1.0
+
+# Terrängfaktor (0-1)
+TERRAIN_FACTOR_MIN = 0.5
+TERRAIN_FACTOR_MAX = 1.0
+
+# Radarstörning (0-0.3)
+RADAR_JAM_MAX = 0.3
+
+# Kommunikationsstörning (0-1)
+COMM_JAM_MIN = 0.0
+COMM_JAM_MAX = 1.0
+
+# Temperaturfaktor (0.7-1.0)
+TEMP_FACTOR_MIN = 0.7
+TEMP_FACTOR_MAX = 1.0
+
+# Systemlatens (sekunder)
+SYSTEM_LATENCY_MIN = 0.0
+SYSTEM_LATENCY_MAX = 2.0
+
+# Sannolikhet för resursfel
+RESOURCE_FAILURE_PROB = 0.05
+
+### MODIFIERARE (från original) ###
+DRONE_TYPE_MODIFIERS = {
+    'light': {'stealth': 1.2, 'speed': 1.1, 'threat': 1.0},
+    'medium': {'stealth': 1.0, 'speed': 1.0, 'threat': 1.2},
+    'heavy': {'stealth': 0.8, 'speed': 0.85, 'threat': 1.5}
+}
+
+FORMATION_EFFECTS = {
+    'tight': {'detection_modifier': 0.9, 'max_parallel': 1},
+    'medium': {'detection_modifier': 1.0, 'max_parallel': 2},
+    'spread': {'detection_modifier': 1.1, 'max_parallel': 3}
+}
+
+AI_BEHAVIOR_MODIFIERS = {
+    'aggressive': 0.9,
+    'evasive': 0.7,
+    'coordinated': 0.8
+}
+
+# ============================================================================
+# SLUTET PÅ INPUT-VARIABLER
+# ============================================================================
+
+
+class DatasetGenerator:
+    """Genererar Monte Carlo-dataset för luftförsvarsscenarier"""
+    
+    def __init__(self):
+        if RANDOM_SEED is not None:
+            np.random.seed(RANDOM_SEED)
+        
+        self.data = []
+        
+    def generate_single_scenario(self):
+        """Genererar EN komplett scenario-rad med inputs och outputs"""
+        
+        # === STRESS TEST CHECK ===
+        is_stress_test = np.random.random() < STRESS_TEST_PROB
+        
+        # === INPUT-VARIABLER ===
+        # Drone count: stress test or normal
+        if is_stress_test:
+            n_drones = np.random.randint(STRESS_TEST_DRONES_MIN, STRESS_TEST_DRONES_MAX + 1)
+        else:
+            n_drones = np.random.randint(N_DRONES_MIN, N_DRONES_MAX + 1)
+        
+        num_units = np.random.randint(NUM_UNITS_MIN, NUM_UNITS_MAX + 1)
+        
+        # Missile capacity: high or normal
+        use_high_capacity = np.random.random() < USE_HIGH_CAPACITY_PROB
+        if use_high_capacity:
+            missiles_per_unit_avg = np.random.randint(MISSILES_PER_UNIT_HIGH_MIN, MISSILES_PER_UNIT_HIGH_MAX + 1)
+        else:
+            missiles_per_unit_avg = np.random.randint(MISSILES_PER_UNIT_MIN, MISSILES_PER_UNIT_MAX + 1)
+        
+        # Multilayer defense
+        use_multilayer = np.random.random() < USE_MULTILAYER_PROB
+        
+        # Strategi
+        priority_strategy = np.random.choice(
+            list(PRIORITY_STRATEGY_PROBS.keys()),
+            p=list(PRIORITY_STRATEGY_PROBS.values())
+        )
+        
+        # Miljöfaktorer
+        weather_factor = np.random.uniform(WEATHER_FACTOR_MIN, WEATHER_FACTOR_MAX)
+        terrain_factor = np.random.uniform(TERRAIN_FACTOR_MIN, TERRAIN_FACTOR_MAX)
+        radar_jam = np.random.beta(2, 5) * RADAR_JAM_MAX
+        comm_jam_level = np.random.uniform(COMM_JAM_MIN, COMM_JAM_MAX)
+        temp_factor = np.random.beta(5, 2) * (TEMP_FACTOR_MAX - TEMP_FACTOR_MIN) + TEMP_FACTOR_MIN
+        system_latency = np.random.uniform(SYSTEM_LATENCY_MIN, SYSTEM_LATENCY_MAX)
+        resource_failure = 1 if np.random.random() < RESOURCE_FAILURE_PROB else 0
+        
+        # Formation (samma för hela svärmen)
+        formation = np.random.choice(
+            list(FORMATION_PROBS.keys()),
+            p=list(FORMATION_PROBS.values())
+        )
+        
+        # Aggregerade drönaregenskaper (medelvärden)
+        avg_drone_speed = 0
+        avg_stealth = 0
+        avg_accuracy = 0
+        drone_type_counts = {'light': 0, 'medium': 0, 'heavy': 0}
+        ai_behavior_counts = {'aggressive': 0, 'evasive': 0, 'coordinated': 0}
+        
+        detected_count = 0
+        intercepted_count = 0
+        total_accuracy_passed = 0
+        
+        # Försvarsresurser
+        total_missiles = num_units * missiles_per_unit_avg
+        missiles_used = 0
+        
+        # === SIMULERA DRÖNARE ===
+        for _ in range(n_drones):
+            # Generera drönare
+            speed_base = np.clip(np.random.normal(DRONE_SPEED_MEAN, DRONE_SPEED_STD), 
+                                DRONE_SPEED_MIN, DRONE_SPEED_MAX)
+            stealth_base = STEALTH_MIN + (STEALTH_MAX - STEALTH_MIN) * np.random.beta(2, 5)
+            accuracy = np.random.triangular(ACCURACY_MIN, (ACCURACY_MIN + ACCURACY_MAX) / 2, ACCURACY_MAX)
+            
+            drone_type = np.random.choice(
+                list(DRONE_TYPE_PROBS.keys()),
+                p=list(DRONE_TYPE_PROBS.values())
+            )
+            drone_type_counts[drone_type] += 1
+            
+            ai_behavior = np.random.choice(
+                list(AI_BEHAVIOR_PROBS.keys()),
+                p=list(AI_BEHAVIOR_PROBS.values())
+            )
+            ai_behavior_counts[ai_behavior] += 1
+            
+            inertia = np.random.uniform(INERTIA_MIN, INERTIA_MAX)
+            
+            # Applicera modifierare
+            type_mods = DRONE_TYPE_MODIFIERS[drone_type]
+            speed = speed_base * type_mods['speed']
+            stealth = np.clip(stealth_base * type_mods['stealth'], STEALTH_MIN, STEALTH_MAX)
+            
+            avg_drone_speed += speed
+            avg_stealth += stealth
+            avg_accuracy += accuracy
+            
+            # === UPPTÄCKT ===
+            base_p_detect = 0.6 + 0.39 * np.random.beta(5, 2)
+            p_detect = base_p_detect * weather_factor * terrain_factor * (1 - radar_jam)
+            p_detect *= (1 - 0.5 * stealth)
+            p_detect *= FORMATION_EFFECTS[formation]['detection_modifier']
+            
+            # Multilayer defense boost (if enabled)
+            if use_multilayer:
+                # Apply each layer's detection boost
+                for layer_name, layer_specs in LAYERED_DEFENSE_SPECS.items():
+                    layer_detect = layer_specs['p_detect']
+                    # Compound probability: at least one layer detects
+                    p_detect = 1 - (1 - p_detect) * (1 - layer_detect * 0.3)  # 30% boost per layer
+            
+            p_detect = np.clip(p_detect, 0, 0.99)
+            
+            detected = np.random.random() < p_detect
+            if detected:
+                detected_count += 1
+                
+                # === INTERCEPT ===
+                if missiles_used < total_missiles:
+                    base_p_intercept = 0.5 + 0.49 * np.random.beta(5, 2)
+                    p_intercept = base_p_intercept * weather_factor * temp_factor
+                    p_intercept *= (1 - 0.003 * speed)
+                    p_intercept *= (1 - resource_failure)
+                    p_intercept *= AI_BEHAVIOR_MODIFIERS[ai_behavior]
+                    p_intercept *= (1 - inertia * 0.15)
+                    
+                    # Multilayer defense boost (if enabled)
+                    if use_multilayer:
+                        # Apply layered intercept boost
+                        for layer_name, layer_specs in LAYERED_DEFENSE_SPECS.items():
+                            layer_intercept = layer_specs['p_intercept']
+                            # Compound probability: at least one layer intercepts
+                            p_intercept = 1 - (1 - p_intercept) * (1 - layer_intercept * 0.25)  # 25% boost per layer
+                    
+                    p_intercept = np.clip(p_intercept, 0, 0.99)
+                    
+                    intercepted = np.random.random() < p_intercept
+                    if intercepted:
+                        intercepted_count += 1
+                        missiles_used += 1
+                    else:
+                        total_accuracy_passed += accuracy
+                else:
+                    total_accuracy_passed += accuracy
+            else:
+                total_accuracy_passed += accuracy
+        
+        # Beräkna medelvärden
+        avg_drone_speed /= n_drones
+        avg_stealth /= n_drones
+        avg_accuracy /= n_drones
+        
+        # === OUTPUT-VARIABLER ===
+        num_passed = n_drones - intercepted_count
+        success_rate = intercepted_count / n_drones if n_drones > 0 else 0
+        detection_rate = detected_count / n_drones if n_drones > 0 else 0
+        civil_risk = total_accuracy_passed / n_drones if n_drones > 0 else 0
+        
+        # Bygg resultat-rad
+        row = {
+            # === CONFIGURATION TAGS ===
+            'is_stress_test': is_stress_test,
+            'use_multilayer': use_multilayer,
+            'use_high_capacity': use_high_capacity,
+            
+            # === INPUTS ===
+            'n_drones': n_drones,
+            'num_units': num_units,
+            'missiles_per_unit_avg': missiles_per_unit_avg,
+            'total_missiles': total_missiles,
+            'priority_strategy': priority_strategy,
+            'weather_factor': weather_factor,
+            'terrain_factor': terrain_factor,
+            'radar_jam': radar_jam,
+            'comm_jam_level': comm_jam_level,
+            'temp_factor': temp_factor,
+            'system_latency': system_latency,
+            'resource_failure': resource_failure,
+            'formation': formation,
+            'avg_drone_speed': avg_drone_speed,
+            'avg_stealth': avg_stealth,
+            'avg_accuracy': avg_accuracy,
+            'pct_light': drone_type_counts['light'] / n_drones,
+            'pct_medium': drone_type_counts['medium'] / n_drones,
+            'pct_heavy': drone_type_counts['heavy'] / n_drones,
+            'pct_aggressive': ai_behavior_counts['aggressive'] / n_drones,
+            'pct_evasive': ai_behavior_counts['evasive'] / n_drones,
+            'pct_coordinated': ai_behavior_counts['coordinated'] / n_drones,
+            
+            # === OUTPUTS ===
+            'num_detected': detected_count,
+            'detection_rate': detection_rate,
+            'num_intercepted': intercepted_count,
+            'num_passed': num_passed,
+            'success_rate': success_rate,
+            'civil_risk': civil_risk,
+            'missiles_used': missiles_used,
+            'missile_efficiency': intercepted_count / missiles_used if missiles_used > 0 else 0
+        }
+        
+        return row
+    
+    def generate_dataset(self, num_rows):
+        """Genererar komplett dataset"""
+        print(f"\n{'='*70}")
+        print(f"GENERERAR DATASET")
+        print(f"{'='*70}")
+        print(f"Antal rader: {num_rows}")
+        if RANDOM_SEED is not None:
+            print(f"Random seed: {RANDOM_SEED}")
+        print(f"{'='*70}\n")
+        
+        for i in range(num_rows):
+            row = self.generate_single_scenario()
+            self.data.append(row)
+            
+            if (i + 1) % 10000 == 0:
+                print(f"Progress: {i + 1}/{num_rows} ({100 * (i + 1) / num_rows:.1f}%)")
+        
+        self.df = pd.DataFrame(self.data)
+        print(f"\n✓ Dataset genererat!")
+        print(f"  Rader: {len(self.df)}")
+        print(f"  Kolumner: {len(self.df.columns)}")
+        print(f"  Storlek: {self.df.memory_usage(deep=True).sum() / 1024 / 1024:.1f} MB")
+        
+        # Configuration summary
+        stress_count = self.df['is_stress_test'].sum()
+        multilayer_count = self.df['use_multilayer'].sum()
+        high_cap_count = self.df['use_high_capacity'].sum()
+        print(f"\n  KONFIGURATIONSÖVERSIKT:")
+        print(f"    Stress tests: {stress_count} ({100*stress_count/len(self.df):.1f}%)")
+        print(f"    Multilayer defense: {multilayer_count} ({100*multilayer_count/len(self.df):.1f}%)")
+        print(f"    High capacity missiles: {high_cap_count} ({100*high_cap_count/len(self.df):.1f}%)")
+        print(f"    Drone count range: {self.df['n_drones'].min()}-{self.df['n_drones'].max()}")
+        print(f"    Unit count range: {self.df['num_units'].min()}-{self.df['num_units'].max()}")
+        
+        return self.df
+    
+    def validate_and_visualize(self):
+        """Visuella kontroller för att upptäcka problem"""
+        print(f"\n{'='*70}")
+        print(f"VISUELL KVALITETSKONTROLL")
+        print(f"{'='*70}\n")
+        
+        # Split data: normal vs stress tests, and multilayer on/off
+        df_normal = self.df[~self.df['is_stress_test']]
+        df_stress = self.df[self.df['is_stress_test']]
+        df_normal_no_multilayer = df_normal[~df_normal['use_multilayer']]
+        df_normal_with_multilayer = df_normal[df_normal['use_multilayer']]
+        
+        print(f"DATASET-ÖVERSIKT:")
+        print(f"  Total rader: {len(self.df)}")
+        print(f"  Normal scenarios: {len(df_normal)} ({100*len(df_normal)/len(self.df):.1f}%)")
+        print(f"    - Utan multilayer: {len(df_normal_no_multilayer)} ({100*len(df_normal_no_multilayer)/len(self.df):.1f}%)")
+        print(f"    - Med multilayer: {len(df_normal_with_multilayer)} ({100*len(df_normal_with_multilayer)/len(self.df):.1f}%)")
+        print(f"  Stress test scenarios: {len(df_stress)} ({100*len(df_stress)/len(self.df):.1f}%)")
+        print(f"\nNORMAL SCENARIOS (NO MULTILAYER) STATISTIK:")
+        print(df_normal_no_multilayer.describe())
+        print("\n")
+        
+        # Kontrollera saknade värden
+        missing = self.df.isnull().sum()
+        if missing.sum() > 0:
+            print("⚠️  VARNING: Saknade värden hittade:")
+            print(missing[missing > 0])
+        else:
+            print("✓ Inga saknade värden")
+        
+        # Kontrollera extremvärden (normal scenarios without multilayer)
+        print("\nEXTREMVÄRDEN (min/max) - NORMAL SCENARIOS (NO MULTILAYER):")
+        for col in ['success_rate', 'detection_rate', 'civil_risk', 'missiles_used']:
+            if col in df_normal_no_multilayer.columns:
+                print(f"  {col}: {df_normal_no_multilayer[col].min():.3f} - {df_normal_no_multilayer[col].max():.3f}")
+        
+        # Skapa visualiseringar (NORMAL SCENARIOS WITHOUT MULTILAYER)
+        fig = plt.figure(figsize=(16, 12))
+        fig.suptitle('Dataset Quality Check - Normal Scenarios (NO Multilayer)', fontsize=16, y=0.995)
+        
+        # 1. Histogram över output-variabler
+        output_vars = ['success_rate', 'detection_rate', 'civil_risk', 'missiles_used']
+        for i, var in enumerate(output_vars, 1):
+            plt.subplot(3, 3, i)
+            plt.hist(df_normal_no_multilayer[var], bins=50, edgecolor='black', alpha=0.7)
+            plt.xlabel(var)
+            plt.ylabel('Frekvens')
+            plt.title(f'Distribution: {var}')
+            plt.grid(True, alpha=0.3)
+        
+        # 5. Success rate vs antal drönare (NORMAL NO MULTILAYER)
+        plt.subplot(3, 3, 5)
+        plt.scatter(df_normal_no_multilayer['n_drones'], df_normal_no_multilayer['success_rate'], alpha=0.3, s=5)
+        plt.xlabel('Antal drönare')
+        plt.ylabel('Success Rate')
+        plt.title('Success Rate vs Antal Drönare')
+        plt.grid(True, alpha=0.3)
+        
+        # 6. Civil risk vs passerade drönare
+        plt.subplot(3, 3, 6)
+        plt.scatter(df_normal_no_multilayer['num_passed'], df_normal_no_multilayer['civil_risk'], alpha=0.3, s=5, color='red')
+        plt.xlabel('Antal Passerade Drönare')
+        plt.ylabel('Civil Risk')
+        plt.title('Civil Risk vs Passerade Drönare')
+        plt.grid(True, alpha=0.3)
+        
+        # 7. Väder-påverkan
+        plt.subplot(3, 3, 7)
+        plt.scatter(df_normal_no_multilayer['weather_factor'], df_normal_no_multilayer['success_rate'], alpha=0.3, s=5, color='blue')
+        plt.xlabel('Väderfaktor')
+        plt.ylabel('Success Rate')
+        plt.title('Väder-påverkan på Success Rate')
+        plt.grid(True, alpha=0.3)
+        
+        # 8. Formation distribution
+        plt.subplot(3, 3, 8)
+        formation_counts = df_normal_no_multilayer['formation'].value_counts()
+        plt.bar(formation_counts.index, formation_counts.values)
+        plt.xlabel('Formation')
+        plt.ylabel('Antal')
+        plt.title('Formation Distribution')
+        plt.grid(True, alpha=0.3)
+        
+        # 9. Strategi distribution
+        plt.subplot(3, 3, 9)
+        strategy_counts = df_normal_no_multilayer['priority_strategy'].value_counts()
+        plt.bar(strategy_counts.index, strategy_counts.values)
+        plt.xlabel('Strategi')
+        plt.ylabel('Antal')
+        plt.title('Strategi Distribution')
+        plt.xticks(rotation=45)
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('data_quality_check_no_multilayer.png', dpi=150, bbox_inches='tight')
+        print(f"\n✓ Kvalitetskontroll-plot (NO multilayer) sparad: data_quality_check_no_multilayer.png")
+        plt.show()
+        
+        # SEPARATE VISUALIZATION FOR MULTILAYER DEFENSE
+        if len(df_normal_with_multilayer) > 0:
+            fig_multilayer = plt.figure(figsize=(16, 12))
+            fig_multilayer.suptitle('Dataset Quality Check - Normal Scenarios (WITH Multilayer)', fontsize=16, y=0.995)
+            
+            # 1. Histogram över output-variabler
+            output_vars = ['success_rate', 'detection_rate', 'civil_risk', 'missiles_used']
+            for i, var in enumerate(output_vars, 1):
+                plt.subplot(3, 3, i)
+                plt.hist(df_normal_with_multilayer[var], bins=50, edgecolor='black', alpha=0.7, color='green')
+                plt.xlabel(var)
+                plt.ylabel('Frekvens')
+                plt.title(f'Distribution: {var}')
+                plt.grid(True, alpha=0.3)
+            
+            # 5. Success rate vs antal drönare
+            plt.subplot(3, 3, 5)
+            plt.scatter(df_normal_with_multilayer['n_drones'], df_normal_with_multilayer['success_rate'], 
+                       alpha=0.3, s=5, color='green')
+            plt.xlabel('Antal drönare')
+            plt.ylabel('Success Rate')
+            plt.title('Success Rate vs Antal Drönare (Multilayer)')
+            plt.grid(True, alpha=0.3)
+            
+            # 6. Civil risk vs passerade drönare
+            plt.subplot(3, 3, 6)
+            plt.scatter(df_normal_with_multilayer['num_passed'], df_normal_with_multilayer['civil_risk'], 
+                       alpha=0.3, s=5, color='darkgreen')
+            plt.xlabel('Antal Passerade Drönare')
+            plt.ylabel('Civil Risk')
+            plt.title('Civil Risk vs Passerade Drönare (Multilayer)')
+            plt.grid(True, alpha=0.3)
+            
+            # 7. Väder-påverkan
+            plt.subplot(3, 3, 7)
+            plt.scatter(df_normal_with_multilayer['weather_factor'], df_normal_with_multilayer['success_rate'], 
+                       alpha=0.3, s=5, color='green')
+            plt.xlabel('Väderfaktor')
+            plt.ylabel('Success Rate')
+            plt.title('Väder-påverkan på Success Rate (Multilayer)')
+            plt.grid(True, alpha=0.3)
+            
+            # 8. Formation distribution
+            plt.subplot(3, 3, 8)
+            formation_counts = df_normal_with_multilayer['formation'].value_counts()
+            plt.bar(formation_counts.index, formation_counts.values, color='green', alpha=0.7)
+            plt.xlabel('Formation')
+            plt.ylabel('Antal')
+            plt.title('Formation Distribution (Multilayer)')
+            plt.grid(True, alpha=0.3)
+            
+            # 9. Strategi distribution
+            plt.subplot(3, 3, 9)
+            strategy_counts = df_normal_with_multilayer['priority_strategy'].value_counts()
+            plt.bar(strategy_counts.index, strategy_counts.values, color='green', alpha=0.7)
+            plt.xlabel('Strategi')
+            plt.ylabel('Antal')
+            plt.title('Strategi Distribution (Multilayer)')
+            plt.xticks(rotation=45)
+            plt.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig('data_quality_check_with_multilayer.png', dpi=150, bbox_inches='tight')
+            print(f"✓ Kvalitetskontroll-plot (WITH multilayer) sparad: data_quality_check_with_multilayer.png")
+            plt.show()
+            
+            # COMPARISON: No Multilayer vs With Multilayer
+            fig_compare = plt.figure(figsize=(16, 6))
+            fig_compare.suptitle('Multilayer Defense Comparison', fontsize=16, y=0.995)
+            
+            # 1. Success rate comparison
+            plt.subplot(1, 4, 1)
+            data_to_plot = [df_normal_no_multilayer['success_rate'], df_normal_with_multilayer['success_rate']]
+            plt.boxplot(data_to_plot, labels=['No Multilayer', 'With Multilayer'])
+            plt.ylabel('Success Rate')
+            plt.title('Success Rate Comparison')
+            plt.grid(True, alpha=0.3)
+            
+            # 2. Detection rate comparison
+            plt.subplot(1, 4, 2)
+            data_to_plot = [df_normal_no_multilayer['detection_rate'], df_normal_with_multilayer['detection_rate']]
+            plt.boxplot(data_to_plot, labels=['No Multilayer', 'With Multilayer'])
+            plt.ylabel('Detection Rate')
+            plt.title('Detection Rate Comparison')
+            plt.grid(True, alpha=0.3)
+            
+            # 3. Civil risk comparison
+            plt.subplot(1, 4, 3)
+            data_to_plot = [df_normal_no_multilayer['civil_risk'], df_normal_with_multilayer['civil_risk']]
+            plt.boxplot(data_to_plot, labels=['No Multilayer', 'With Multilayer'])
+            plt.ylabel('Civil Risk')
+            plt.title('Civil Risk Comparison')
+            plt.grid(True, alpha=0.3)
+            
+            # 4. Statistics bar chart
+            plt.subplot(1, 4, 4)
+            stats_data = {
+                'No Multilayer': [
+                    df_normal_no_multilayer['success_rate'].mean(),
+                    df_normal_no_multilayer['detection_rate'].mean(),
+                    df_normal_no_multilayer['civil_risk'].mean()
+                ],
+                'With Multilayer': [
+                    df_normal_with_multilayer['success_rate'].mean(),
+                    df_normal_with_multilayer['detection_rate'].mean(),
+                    df_normal_with_multilayer['civil_risk'].mean()
+                ]
+            }
+            x = np.arange(3)
+            width = 0.35
+            plt.bar(x - width/2, stats_data['No Multilayer'], width, label='No Multilayer', alpha=0.7)
+            plt.bar(x + width/2, stats_data['With Multilayer'], width, label='With Multilayer', 
+                   alpha=0.7, color='green')
+            plt.ylabel('Mean Value')
+            plt.title('Mean Metrics Comparison')
+            plt.xticks(x, ['Success', 'Detection', 'Civil Risk'], rotation=45)
+            plt.legend()
+            plt.grid(True, alpha=0.3, axis='y')
+            
+            plt.tight_layout()
+            plt.savefig('multilayer_comparison.png', dpi=150, bbox_inches='tight')
+            print(f"✓ Multilayer-jämförelse sparad: multilayer_comparison.png")
+            plt.show()
+        
+        # SEPARATE STRESS TEST VISUALIZATION
+        if len(df_stress) > 0:
+            fig_stress = plt.figure(figsize=(16, 8))
+            fig_stress.suptitle('Stress Test Scenarios Analysis', fontsize=16, y=0.995)
+            
+            # 1. Success rate distribution - stress
+            plt.subplot(2, 4, 1)
+            plt.hist(df_stress['success_rate'], bins=30, edgecolor='black', alpha=0.7, color='orange')
+            plt.xlabel('Success Rate')
+            plt.ylabel('Frekvens')
+            plt.title('Success Rate - Stress Tests')
+            plt.grid(True, alpha=0.3)
+            
+            # 2. Detection rate distribution - stress
+            plt.subplot(2, 4, 2)
+            plt.hist(df_stress['detection_rate'], bins=30, edgecolor='black', alpha=0.7, color='orange')
+            plt.xlabel('Detection Rate')
+            plt.ylabel('Frekvens')
+            plt.title('Detection Rate - Stress Tests')
+            plt.grid(True, alpha=0.3)
+            
+            # 3. Civil risk - stress
+            plt.subplot(2, 4, 3)
+            plt.hist(df_stress['civil_risk'], bins=30, edgecolor='black', alpha=0.7, color='red')
+            plt.xlabel('Civil Risk')
+            plt.ylabel('Frekvens')
+            plt.title('Civil Risk - Stress Tests')
+            plt.grid(True, alpha=0.3)
+            
+            # 4. Missiles used - stress
+            plt.subplot(2, 4, 4)
+            plt.hist(df_stress['missiles_used'], bins=30, edgecolor='black', alpha=0.7, color='orange')
+            plt.xlabel('Missiles Used')
+            plt.ylabel('Frekvens')
+            plt.title('Missiles Used - Stress Tests')
+            plt.grid(True, alpha=0.3)
+            
+            # 5. Success vs drones - stress
+            plt.subplot(2, 4, 5)
+            plt.scatter(df_stress['n_drones'], df_stress['success_rate'], alpha=0.5, s=10, color='orange')
+            plt.xlabel('Antal Drönare')
+            plt.ylabel('Success Rate')
+            plt.title('Success Rate vs Drönare (300-500)')
+            plt.grid(True, alpha=0.3)
+            
+            # 6. Civil risk vs passed - stress
+            plt.subplot(2, 4, 6)
+            plt.scatter(df_stress['num_passed'], df_stress['civil_risk'], alpha=0.5, s=10, color='red')
+            plt.xlabel('Passerade Drönare')
+            plt.ylabel('Civil Risk')
+            plt.title('Civil Risk vs Passerade (Stress)')
+            plt.grid(True, alpha=0.3)
+            
+            # 7. Comparison box plot
+            plt.subplot(2, 4, 7)
+            data_to_plot = [df_normal['success_rate'], df_stress['success_rate']]
+            plt.boxplot(data_to_plot, labels=['Normal', 'Stress'])
+            plt.ylabel('Success Rate')
+            plt.title('Success Rate: Normal vs Stress')
+            plt.grid(True, alpha=0.3)
+            
+            # 8. Statistics comparison
+            plt.subplot(2, 4, 8)
+            stats_data = {
+                'Normal': [df_normal['success_rate'].mean(), df_normal['civil_risk'].mean()],
+                'Stress': [df_stress['success_rate'].mean(), df_stress['civil_risk'].mean()]
+            }
+            x = np.arange(2)
+            width = 0.35
+            plt.bar(x - width/2, stats_data['Normal'], width, label='Normal', alpha=0.7)
+            plt.bar(x + width/2, stats_data['Stress'], width, label='Stress', alpha=0.7, color='orange')
+            plt.ylabel('Mean Value')
+            plt.title('Mean Comparison')
+            plt.xticks(x, ['Success Rate', 'Civil Risk'])
+            plt.legend()
+            plt.grid(True, alpha=0.3, axis='y')
+            
+            plt.tight_layout()
+            plt.savefig('stress_test_analysis.png', dpi=150, bbox_inches='tight')
+            print(f"✓ Stress test-analys sparad: stress_test_analysis.png")
+            plt.show()
+        
+        # Korrelationsmatris (NO MULTILAYER)
+        fig2, ax = plt.subplots(figsize=(12, 10))
+        numeric_cols = df_normal_no_multilayer.select_dtypes(include=[np.number]).columns
+        corr = df_normal_no_multilayer[numeric_cols].corr()
+        sns.heatmap(corr, annot=False, cmap='coolwarm', center=0, ax=ax, 
+                   cbar_kws={'label': 'Korrelation'})
+        plt.title('Korrelationsmatris - Normal Scenarios')
+        plt.tight_layout()
+        plt.savefig('correlation_matrix.png', dpi=150, bbox_inches='tight')
+        print(f"✓ Korrelationsmatris sparad: correlation_matrix.png")
+        plt.show()
+        
+        # Outlier-analys för kritiska variabler (NO MULTILAYER)
+        fig3, axes = plt.subplots(2, 2, figsize=(12, 8))
+        fig3.suptitle('Outlier-analys (Boxplots) - Normal Scenarios', fontsize=14)
+        
+        critical_vars = ['success_rate', 'detection_rate', 'civil_risk', 'missiles_used']
+        for idx, var in enumerate(critical_vars):
+            ax = axes[idx // 2, idx % 2]
+            ax.boxplot(df_normal_no_multilayer[var])
+            ax.set_ylabel(var)
+            ax.set_title(f'Boxplot: {var}')
+            ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('outlier_analysis.png', dpi=150, bbox_inches='tight')
+        print(f"✓ Outlier-analys sparad: outlier_analysis.png")
+        plt.show()
+        
+        print(f"\n{'='*70}")
+        print(f"✓ KVALITETSKONTROLL KLAR")
+        print(f"{'='*70}\n")
+    
+    def export_dataset(self, filename):
+        """Exportera dataset till CSV"""
+        self.df.to_csv(filename, index=False)
+        print(f"\n{'='*70}")
+        print(f"✓ DATASET EXPORTERAT")
+        print(f"{'='*70}")
+        print(f"Filnamn: {filename}")
+        print(f"Filstorlek: {self.df.memory_usage(deep=True).sum() / 1024 / 1024:.1f} MB")
+        print(f"{'='*70}\n")
+
+
+# ============================================================================
+# HUVUDPROGRAM
+# ============================================================================
+
+if __name__ == "__main__":
+    print("\n" + "="*70)
+    print("MONTE CARLO DATASET GENERATOR")
+    print("Luftförsvar mot Drönarsvärmar")
+    print("="*70 + "\n")
+    
+    # Skapa generator
+    generator = DatasetGenerator()
+    
+    # Generera dataset
+    df = generator.generate_dataset(NUM_ROWS)
+    
+    # Visuell kvalitetskontroll
+    generator.validate_and_visualize()
+    
+    # Exportera
+    generator.export_dataset(OUTPUT_FILENAME)
+    
+    print("✓ KLART! Dataset är redo för AI-träning.")
+    print(f"\nFörsta 5 raderna:")
+    print(df.head())

@@ -1,0 +1,994 @@
+"""
+Monte Carlo Simulering - Luftförsvar mot Drönarsvärmar
+Gymnasiearbete - Version 5.0
+
+Följer exakt specifikationen i "Gymnasiearbete - Variabel lista"
+VERSION 5: Enhanced unified training with comprehensive config variants
+         - Multilayer defense toggles
+         - Stress test scenarios (300-500 drones)
+         - Full unit range (2-10)
+         - Missile capacity variants
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, Optional
+from scipy import stats
+import pandas as pd
+from datetime import datetime
+import json
+import os
+import random
+
+@dataclass
+class Drone:
+    """Drönare med alla egenskaper enligt dokumentet"""
+    id: int
+    speed: float  # km/h, Normal(60, 15)
+    stealth: float  # 0.5-0.99, Beta(2,5)
+    accuracy: float  # 0.5-0.99, Triangulär
+    drone_type: str  # light, medium, heavy
+    formation: str  # tight, medium, spread
+    ai_behavior: str  # aggressive, evasive, coordinated
+    inertia: float  # 0.1-1.0, Uniform
+    x: float  # 2D position
+    y: float
+    detected: bool = False
+    intercepted: bool = False
+    time_to_target: float = 0.0
+
+@dataclass
+class DefenseUnit:
+    """Försvarsenhet med missiler och egenskaper"""
+    id: int
+    num_missiles: int  # 1-20
+    missiles_remaining: int
+    response_time: float  # 0.5-5s, Uniform
+    status: str = "online"  # online/offline
+    reload_time: float = 0.0  # 5-30s
+    is_reloading: bool = False
+
+class MonteCarloSimulation:
+    """
+    Monte Carlo-simulering av luftförsvar mot drönarsvärmar
+    
+    Implementerar alla variabler och formler från dokumentet:
+    - Drönarrelaterade: hastighet, stealth, precision, typ, formation, AI-beteende
+    - Försvarsrelaterade: upptäckt, intercept, resurser, multilayer
+    - Miljörelaterade: väder, terräng, störningar
+    """
+    
+    def __init__(self, config: Dict):
+        self.config = config
+        self.results = []
+        self.scenario_name = config.get('scenario_name', 'default')
+        # Bas-outputkatalog per scenario (separerar tester så de inte blandas)
+        self.output_base = os.path.join('simulation_results', str(self.scenario_name))
+        
+        # Sätt random seed för reproducerbarhet
+        if config.get('random_seed') is not None:
+            np.random.seed(config['random_seed'])
+        
+        # Skapa output-mappar
+        self.create_output_dirs()
+        
+    def create_output_dirs(self):
+        """Skapa mappar för resultat"""
+        # Skapa per-scenario mappar: simulation_results/<scenario_name>/{data,figures,reports}
+        os.makedirs(os.path.join(self.output_base, 'data'), exist_ok=True)
+        os.makedirs(os.path.join(self.output_base, 'figures'), exist_ok=True)
+        os.makedirs(os.path.join(self.output_base, 'reports'), exist_ok=True)
+    
+    def generate_drones(self, n_drones: int) -> List[Drone]:
+        """
+        Generera drönarsvärm enligt dokumentets fördelningar
+        
+        Drönare får egenskaper från:
+        - Normal(60, 15) för hastighet
+        - Beta(2,5) för stealth
+        - Triangulär(0.5, 0.75, 0.99) för precision
+        """
+        drones = []
+        
+        # Formation slumpas EN gång för hela svärmen
+        formation = np.random.choice(['tight', 'medium', 'spread'])
+        
+        for i in range(n_drones):
+            # Hastighet: Normal(μ=60, σ=15), klippt till 40-100 km/h
+            speed_base = np.clip(np.random.normal(60, 15), 40, 100)
+            
+            # Stealth: Beta(2,5) skalad till 0.5-0.99
+            stealth_base = 0.5 + 0.49 * np.random.beta(2, 5)
+            
+            # Precision: Triangulär fördelning
+            accuracy = np.random.triangular(0.5, 0.75, 0.99)
+            
+            # Drönarklass: light (50%), medium (30%), heavy (20%)
+            drone_type = np.random.choice(['light', 'medium', 'heavy'], 
+                                         p=[0.5, 0.3, 0.2])
+            
+            # Applicera drone_type modifiers
+            type_mods = self.config['drone_type_modifiers'][drone_type]
+            speed = speed_base * type_mods['speed']
+            stealth = np.clip(stealth_base * type_mods['stealth'], 0.5, 0.99)
+            
+            # AI-beteende: uniform fördelning
+            ai_behavior = np.random.choice(['aggressive', 'evasive', 'coordinated'])
+            
+            # Tröghetsfaktor: Uniform 0.1-1.0
+            inertia = np.random.uniform(0.1, 1.0)
+            
+            # Position baserat på formation
+            if formation == 'tight':
+                x = np.random.normal(0, 20)
+                y = np.random.normal(0, 20)
+            elif formation == 'medium':
+                x = np.random.normal(0, 50)
+                y = np.random.normal(0, 50)
+            else:  # spread
+                x = np.random.uniform(-100, 100)
+                y = np.random.uniform(-100, 100)
+            
+            # Tid till mål
+            time_to_target = np.clip(np.random.normal(30, 15), 5, 60)
+            
+            drone = Drone(i, speed, stealth, accuracy, drone_type, formation,
+                         ai_behavior, inertia, x, y, 
+                         time_to_target=time_to_target)
+            drones.append(drone)
+        
+        return drones
+    
+    def generate_defense_units(self) -> List[DefenseUnit]:
+        """
+        Generera försvarsenheter
+        
+        Antal: num_units (1-10)
+        Missiler per enhet: num_missiles (1-20)
+        Responstid: Uniform(0.5, 5.0) sekunder
+        Status: 5-10% risk för offline
+        """
+        units = []
+        num_units = self.config['num_units']
+        
+        for i in range(num_units):
+            num_missiles = np.random.randint(
+                self.config['missiles_per_unit'][0],
+                self.config['missiles_per_unit'][1] + 1
+            )
+            
+            response_time = np.random.uniform(0.5, 5.0)
+            
+            # 7.5% risk att enheten är offline
+            status = "offline" if np.random.random() < 0.075 else "online"
+            
+            # Reload time: 5-30 sekunder
+            reload_time = np.random.uniform(5, 30)
+            
+            unit = DefenseUnit(i, num_missiles, num_missiles, 
+                             response_time, status, reload_time)
+            units.append(unit)
+        
+        return units
+    
+    def generate_environmental_factors(self) -> Dict:
+        """
+        Generera miljöfaktorer enligt dokumentet
+        
+        - Väder: Uniform(0.6, 1.0)
+        - Terräng: Konstant (från config)
+        - Radar jam: Beta → 0-0.3
+        - Temperatur: Beta → 0.7-1.0
+        - System latens: Uniform(0, 2) sekunder
+        """
+        
+        return {
+            'weather_factor': np.random.uniform(0.6, 1.0),
+            'terrain_factor': np.random.uniform(0.5, 1.0),
+            'radar_jam': np.random.beta(2, 5) * 0.3,
+            'comm_jam_level': np.random.beta(2, 5),
+            'temp_factor': np.random.beta(5, 2) * 0.3 + 0.7,
+            'system_latency': np.random.uniform(0, 2),
+            'resource_failure': 1 if np.random.random() < 0.05 else 0  # Bernoulli
+        }
+    
+    def calculate_detection_probability(self, drone: Drone, 
+                                       env_factors: Dict,
+                                       layer: Optional[str] = None) -> float:
+        """
+        Beräkna upptäcktssannolikhet enligt dokumentets formel:
+        
+        p_detection = base × weather × terrain × (1-jam) × (1-0.5×stealth) × formation
+        
+        Args:
+            drone: Drönaren som ska upptäckas
+            env_factors: Miljöfaktorer
+            layer: Vilket försvarslager (long/medium/short range), None = standard
+        """
+        # Bas-sannolikhet från systemets kapacitet eller från layer
+        if layer and layer in self.config.get('layered_defense_specs', {}):
+            base_p = self.config['layered_defense_specs'][layer]['p_detect']
+        else:
+            base_p = 0.6 + 0.39 * np.random.beta(5, 2)
+        
+        # Dokumentets formel
+        p_detect = base_p
+        p_detect *= env_factors['weather_factor']
+        p_detect *= env_factors['terrain_factor']
+        p_detect *= (1 - env_factors['radar_jam'])
+        p_detect *= (1 - 0.5 * drone.stealth)
+        
+        # Formation modifier
+        formation_mod = self.config['formation_effects'][drone.formation]['detection_modifier']
+        p_detect *= formation_mod
+        
+        return np.clip(p_detect, 0, 0.99)
+    
+    def calculate_intercept_probability(self, drone: Drone, 
+                                       env_factors: Dict,
+                                       layer: Optional[str] = None) -> float:
+        """
+        Beräkna intercept-sannolikhet enligt dokumentets formel:
+        
+        p_intercept = base × weather × temp × (1-0.003×v) × (1-failure) × AI × inertia
+        
+        Args:
+            drone: Drönaren som ska interceptas
+            env_factors: Miljöfaktorer
+            layer: Vilket försvarslager, None = standard
+        """
+        # Bas-sannolikhet
+        if layer and layer in self.config.get('layered_defense_specs', {}):
+            base_p = self.config['layered_defense_specs'][layer]['p_intercept']
+        else:
+            base_p = 0.5 + 0.49 * np.random.beta(5, 2)
+        
+        # Dokumentets formel
+        p_intercept = base_p
+        p_intercept *= env_factors['weather_factor']
+        p_intercept *= env_factors['temp_factor']
+        p_intercept *= (1 - 0.003 * drone.speed)  # Hastighet påverkar
+        p_intercept *= (1 - env_factors['resource_failure'])  # Bernoulli failure
+        
+        # AI behavior modifier
+        ai_mod = self.config['ai_behavior_modifiers'][drone.ai_behavior]
+        p_intercept *= ai_mod
+        
+        # Inertia factor
+        p_intercept *= (1 - drone.inertia * 0.15)
+        
+        return np.clip(p_intercept, 0, 0.99)
+    
+    def prioritize_targets(self, drones: List[Drone], 
+                          strategy: str) -> List[Drone]:
+        """
+        Prioritera mål enligt vald strategi
+        
+        Strategier:
+        - fastest_first: Snabbaste drönarna först
+        - most_threat: Högst hotnivå först (speed×0.3 + accuracy×0.5 + type)
+        - random: Slumpmässig ordning
+        """
+        if strategy == 'fastest_first':
+            return sorted(drones, key=lambda d: d.speed, reverse=True)
+        
+        elif strategy == 'most_threat':
+            threat_scores = []
+            for d in drones:
+                # Hotnivå från dokumentet
+                threat = d.speed * 0.3 + d.accuracy * 0.5
+                threat *= self.config['drone_type_modifiers'][d.drone_type]['threat']
+                threat_scores.append((d, threat))
+            return [d for d, _ in sorted(threat_scores, 
+                                        key=lambda x: x[1], reverse=True)]
+        
+        else:  # random
+            drones_copy = drones.copy()
+            np.random.shuffle(drones_copy)
+            return drones_copy
+    
+    def run_single_scenario(self, n_drones: int) -> Dict:
+        """
+        Kör EN Monte Carlo-iteration
+        
+        Steg:
+        1. Generera drönare och försvarsenheter
+        2. Generera miljöfaktorer
+        3. Upptäcktsfas (med multilayer om aktiverat)
+        4. Prioritera mål
+        5. Interceptfas (med formation effects)
+        6. Beräkna resultat
+        """
+        # === GENERERING ===
+        drones = self.generate_drones(n_drones)
+        units = self.generate_defense_units()
+        env_factors = self.generate_environmental_factors()
+        
+        # === UPPTÄCKTSFAS ===
+        # Om multilayer defense är aktiverat
+        if 'layered_defense' in self.config and self.config['layered_defense']:
+            for layer in self.config['layered_defense']:
+                for drone in drones:
+                    if not drone.detected:
+                        p_detect = self.calculate_detection_probability(
+                            drone, env_factors, layer)
+                        if np.random.random() < p_detect:
+                            drone.detected = True
+        else:
+            # Standard upptäckt
+            for drone in drones:
+                p_detect = self.calculate_detection_probability(drone, env_factors)
+                if np.random.random() < p_detect:
+                    drone.detected = True
+        
+        detected_drones = [d for d in drones if d.detected]
+        
+        # === PRIORITERING ===
+        strategy = self.config['priority_strategy']
+        prioritized_drones = self.prioritize_targets(detected_drones, strategy)
+        
+        # === INTERCEPTFAS ===
+        # Formation påverkar hur många drönare som kan bekämpas parallellt
+        formation = drones[0].formation if drones else 'medium'
+        max_parallel = self.config['formation_effects'][formation]['max_parallel']
+        
+        intercepted_count = 0
+        missiles_used = 0
+        
+        for drone in prioritized_drones:
+            # Hitta tillgänglig enhet
+            available_units = [u for u in units 
+                             if u.status == "online" 
+                             and u.missiles_remaining > 0
+                             and not u.is_reloading]
+            
+            if not available_units:
+                break
+            
+            # Ta första tillgängliga enheten
+            unit = available_units[0]
+            
+            # Beräkna intercept-sannolikhet
+            if 'layered_defense' in self.config and self.config['layered_defense']:
+                # Försök med varje lager
+                for layer in self.config['layered_defense']:
+                    if drone.intercepted:
+                        break
+                    p_intercept = self.calculate_intercept_probability(
+                        drone, env_factors, layer)
+                    if np.random.random() < p_intercept:
+                        drone.intercepted = True
+                        intercepted_count += 1
+            else:
+                # Standard intercept
+                p_intercept = self.calculate_intercept_probability(
+                    drone, env_factors)
+                if np.random.random() < p_intercept:
+                    drone.intercepted = True
+                    intercepted_count += 1
+            
+            # Använd missil
+            unit.missiles_remaining -= 1
+            missiles_used += 1
+            
+            # Om enheten är tom, sätt reload
+            if unit.missiles_remaining == 0:
+                unit.is_reloading = True
+        
+        # === BERÄKNA RESULTAT ===
+        num_intercepted = sum(1 for d in drones if d.intercepted)
+        num_passed = n_drones - num_intercepted
+        success_rate = num_intercepted / n_drones if n_drones > 0 else 0
+        
+        # Civil risk: summa av precision för passerade drönare, normaliserad
+        passed_drones = [d for d in drones if not d.intercepted]
+        civil_risk = sum(d.accuracy for d in passed_drones) / n_drones if n_drones > 0 else 0
+        
+        detection_rate = len(detected_drones) / n_drones if n_drones > 0 else 0
+        
+        # Returnera alla variabler för AI-träning
+        return {
+            # Input variabler (features)
+            'n_drones': n_drones,
+            'num_units': self.config['num_units'],
+            'missiles_per_unit_avg': np.mean(self.config['missiles_per_unit']),
+            'priority_strategy': strategy,
+            'weather_factor': env_factors['weather_factor'],
+            'terrain_factor': env_factors['terrain_factor'],
+            'radar_jam': env_factors['radar_jam'],
+            'comm_jam_level': env_factors['comm_jam_level'],
+            'temp_factor': env_factors['temp_factor'],
+            'system_latency': env_factors['system_latency'],
+            'resource_failure': env_factors['resource_failure'],
+            'formation': formation,
+            
+            # Output variabler (labels)
+            'num_detected': len(detected_drones),
+            'detection_rate': detection_rate,
+            'num_intercepted': num_intercepted,
+            'num_passed': num_passed,
+            'success_rate': success_rate,
+            'civil_risk': civil_risk,
+            'missiles_used': missiles_used,
+        }
+    
+    def run_simulation(self, n_iterations: int, n_drones_range: Tuple[int, int]):
+        """
+        Kör fullständig Monte Carlo-simulering
+        
+        Args:
+            n_iterations: Antal iterationer (t.ex. 1000)
+            n_drones_range: (min, max) antal drönare, t.ex. (10, 200)
+        """
+        print(f"\n{'='*70}")
+        print(f"MONTE CARLO-SIMULERING: {self.scenario_name}")
+        print(f"{'='*70}")
+        print(f"Iterationer: {n_iterations}")
+        print(f"Drönarintervall: {n_drones_range[0]}-{n_drones_range[1]}")
+        print(f"Försvarsenheter: {self.config['num_units']}")
+        print(f"Strategi: {self.config['priority_strategy']}")
+        if self.config.get('random_seed'):
+            print(f"Random seed: {self.config['random_seed']}")
+        print(f"{'='*70}\n")
+        
+        for i in range(n_iterations):
+            # Slumpa antal drönare för varje iteration
+            n_drones = np.random.randint(n_drones_range[0], n_drones_range[1] + 1)
+            
+            # Kör scenario
+            result = self.run_single_scenario(n_drones)
+            # Lägg till meta-data så raderna kan grupperas/filtreras senare
+            result['scenario_name'] = self.scenario_name
+            result['iteration'] = i + 1
+            self.results.append(result)
+            
+            # Progress update
+            if (i + 1) % 100 == 0:
+                progress = 100 * (i + 1) / n_iterations
+                print(f"Progress: {i + 1}/{n_iterations} ({progress:.1f}%)")
+        
+        print(f"\n✓ Simulering klar!")
+        
+        # Spara resultat automatiskt
+        self.save_results()
+    
+    def save_results(self):
+        """Spara simuleringsresultat till CSV för AI-träning"""
+        df = pd.DataFrame(self.results)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Spara data i per-scenario data-mapp
+        data_dir = os.path.join(self.output_base, 'data')
+
+        filename = os.path.join(data_dir, f'{self.scenario_name}_{timestamp}.csv')
+        df.to_csv(filename, index=False)
+        print(f"✓ Data sparad: {filename}")
+
+        # Spara konfiguration i per-scenario data-mapp
+        config_file = os.path.join(self.output_base, 'data', f'config_{self.scenario_name}_{timestamp}.json')
+        config_save = self.config.copy()
+        # Konvertera tuple till list för JSON
+        if 'missiles_per_unit' in config_save:
+            config_save['missiles_per_unit'] = list(config_save['missiles_per_unit'])
+        if 'terrain_factor_range' in config_save:
+            config_save['terrain_factor_range'] = list(config_save['terrain_factor_range'])
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config_save, f, indent=2, ensure_ascii=False)
+        print(f"✓ Konfiguration sparad: {config_file}")
+    
+    def analyze_results(self) -> Dict:
+        """
+        Statistisk analys av resultat
+        
+        Beräknar:
+        - Medelvärde och standardavvikelse
+        - 95% konfidensintervall
+        - Sensitivitetsanalys via Pearson-korrelation
+        """
+        df = pd.DataFrame(self.results)
+        
+        analysis = {
+            'scenario_name': self.scenario_name,
+            'n_iterations': len(self.results),
+            'mean_success_rate': df['success_rate'].mean(),
+            'std_success_rate': df['success_rate'].std(),
+            'median_success_rate': df['success_rate'].median(),
+            'ci_95_lower': df['success_rate'].quantile(0.025),
+            'ci_95_upper': df['success_rate'].quantile(0.975),
+            'mean_detection_rate': df['detection_rate'].mean(),
+            'mean_civil_risk': df['civil_risk'].mean(),
+            'mean_missiles_used': df['missiles_used'].mean(),
+            'mean_passed': df['num_passed'].mean(),
+        }
+        
+        # Sensitivitetsanalys: Pearson-korrelation
+        sensitivity = {}
+        numeric_cols = ['weather_factor', 'terrain_factor', 'n_drones', 
+                       'radar_jam', 'temp_factor', 'system_latency']
+        
+        for col in numeric_cols:
+            if col in df.columns:
+                corr = df[col].corr(df['success_rate'])
+                # Hantera fallet där kolumnen är konstant → korrelation blir NaN
+                # I sådana fall sätter vi sensitiviteten till 0.0 istället för NaN
+                if pd.isna(corr):
+                    sensitivity[col] = 0.0
+                else:
+                    sensitivity[col] = abs(corr)
+        
+        analysis['sensitivity'] = sensitivity
+        
+        return analysis
+    
+    def save_analysis_report(self, analysis: Dict):
+        """Spara analysrapport som textfil"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = os.path.join(self.output_base, 'reports', f'analys_{self.scenario_name}_{timestamp}.txt')
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write("="*70 + "\n")
+            f.write("MONTE CARLO-SIMULERING - ANALYSRAPPORT\n")
+            f.write(f"Scenario: {analysis['scenario_name']}\n")
+            f.write(f"Genererad: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("="*70 + "\n\n")
+            
+            f.write(f"Antal iterationer: {analysis['n_iterations']}\n\n")
+            
+            f.write("HUVUDRESULTAT:\n")
+            f.write(f"  Medel Success Rate: {analysis['mean_success_rate']:.3f} ± {analysis['std_success_rate']:.3f}\n")
+            f.write(f"  Median Success Rate: {analysis['median_success_rate']:.3f}\n")
+            f.write(f"  95% KI: [{analysis['ci_95_lower']:.3f}, {analysis['ci_95_upper']:.3f}]\n")
+            f.write(f"  Medel Detection Rate: {analysis['mean_detection_rate']:.3f}\n")
+            f.write(f"  Medel Civil Risk: {analysis['mean_civil_risk']:.3f}\n")
+            f.write(f"  Medel Missiler Använda: {analysis['mean_missiles_used']:.1f}\n")
+            f.write(f"  Medel Drönare Passerade: {analysis['mean_passed']:.1f}\n\n")
+            
+            f.write("SENSITIVITETSANALYS (Pearson |r|):\n")
+            for var, sens in sorted(analysis['sensitivity'].items(), 
+                                   key=lambda x: x[1], reverse=True):
+                f.write(f"  {var}: {sens:.3f}\n")
+            f.write("\n" + "="*70 + "\n")
+        
+        print(f"✓ Analysrapport sparad: {filename}")
+    
+    def visualize_results(self, swedish_labels: bool = True):
+        """
+        Skapa visualiseringar av resultat
+        
+        6 grafer:
+        1. Success rate distribution
+        2. Success rate vs antal drönare
+        3. Detection vs success
+        4. Weather impact
+        5. Missiles used
+        6. Civil risk
+        """
+        df = pd.DataFrame(self.results)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Svenska eller engelska labels
+        if swedish_labels:
+            labels = {
+                'success_rate': 'Framgångsgrad',
+                'n_drones': 'Antal drönare',
+                'detection_rate': 'Upptäcktsgrad',
+                'frequency': 'Frekvens',
+                'missiles_used': 'Missiler använda',
+                'civil_risk': 'Civil risk',
+                'mean': 'Medelvärde'
+            }
+        else:
+            labels = {
+                'success_rate': 'Success Rate',
+                'n_drones': 'Number of Drones',
+                'detection_rate': 'Detection Rate',
+                'frequency': 'Frequency',
+                'missiles_used': 'Missiles Used',
+                'civil_risk': 'Civil Risk',
+                'mean': 'Mean'
+            }
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        fig.suptitle(f'Monte Carlo-simulering: {self.scenario_name}', fontsize=16)
+        
+        # 1. Success rate distribution
+        axes[0, 0].hist(df['success_rate'], bins=30, edgecolor='black', alpha=0.7)
+        axes[0, 0].set_xlabel(labels['success_rate'])
+        axes[0, 0].set_ylabel(labels['frequency'])
+        axes[0, 0].set_title(f'{labels["success_rate"]} - Fördelning')
+        mean_val = df['success_rate'].mean()
+        axes[0, 0].axvline(mean_val, color='r', linestyle='--', 
+                          label=f'{labels["mean"]}: {mean_val:.3f}')
+        axes[0, 0].legend()
+        
+        # 2. Success vs drones
+        axes[0, 1].scatter(df['n_drones'], df['success_rate'], alpha=0.5)
+        axes[0, 1].set_xlabel(labels['n_drones'])
+        axes[0, 1].set_ylabel(labels['success_rate'])
+        axes[0, 1].set_title(f'{labels["success_rate"]} vs {labels["n_drones"]}')
+        
+        # 3. Detection vs success
+        axes[0, 2].scatter(df['detection_rate'], df['success_rate'], alpha=0.5)
+        axes[0, 2].set_xlabel(labels['detection_rate'])
+        axes[0, 2].set_ylabel(labels['success_rate'])
+        axes[0, 2].set_title(f'{labels["detection_rate"]} vs {labels["success_rate"]}')
+        
+        # 4. Weather impact
+        weather_bins = pd.cut(df['weather_factor'], bins=5)
+        success_by_weather = df.groupby(weather_bins)['success_rate'].mean()
+        axes[1, 0].bar(range(len(success_by_weather)), success_by_weather.values)
+        axes[1, 0].set_xlabel('Väderfaktor (grupperad)')
+        axes[1, 0].set_ylabel(f'Medel {labels["success_rate"]}')
+        axes[1, 0].set_title('Väder-påverkan')
+        
+        # 5. Missiles used
+        axes[1, 1].hist(df['missiles_used'], bins=20, edgecolor='black', alpha=0.7)
+        axes[1, 1].set_xlabel(labels['missiles_used'])
+        axes[1, 1].set_ylabel(labels['frequency'])
+        axes[1, 1].set_title(f'{labels["missiles_used"]} - Fördelning')
+        
+        # 6. Civil risk
+        axes[1, 2].hist(df['civil_risk'], bins=20, edgecolor='black', alpha=0.7, color='red')
+        axes[1, 2].set_xlabel(labels['civil_risk'])
+        axes[1, 2].set_ylabel(labels['frequency'])
+        axes[1, 2].set_title(f'{labels["civil_risk"]} - Fördelning')
+        
+        plt.tight_layout()
+        filename = os.path.join(self.output_base, 'figures', f'oversikt_{self.scenario_name}_{timestamp}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"✓ Översiktsplot sparad: {filename}")
+        plt.show()
+        
+        # Korrelationsmatris
+        fig2, ax = plt.subplots(figsize=(10, 8))
+        numeric_cols = ['n_drones', 'detection_rate', 'success_rate', 
+                       'weather_factor', 'terrain_factor', 'missiles_used', 'civil_risk']
+        corr_matrix = df[numeric_cols].corr()
+        sns.heatmap(corr_matrix, annot=True, fmt='.2f', cmap='coolwarm', 
+                   center=0, ax=ax)
+        ax.set_title(f'Korrelationsmatris: {self.scenario_name}')
+        plt.tight_layout()
+        filename = os.path.join(self.output_base, 'figures', f'korrelation_{self.scenario_name}_{timestamp}.png')
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"✓ Korrelationsheatmap sparad: {filename}")
+        plt.show()
+
+
+def compare_scenarios(scenarios: List[Dict], n_iterations: int = 500, 
+                     n_drones_range: Tuple[int, int] = (10, 200)):
+    """
+    Jämför flera scenarier sida vid sida
+    
+    Args:
+        scenarios: Lista med config-dictionaries för olika scenarier
+        n_iterations: Antal iterationer per scenario
+        n_drones_range: (min, max) antal drönare
+    """
+    print("\n" + "="*70)
+    print("SCENARIOJÄMFÖRELSE")
+    print("="*70)
+    
+    all_results = {}
+    num_units_set = set()
+    
+    for scenario_config in scenarios:
+        # Kör simulering för varje scenario
+        sim = MonteCarloSimulation(scenario_config)
+        sim.run_simulation(n_iterations, n_drones_range)
+        analysis = sim.analyze_results()
+        all_results[scenario_config['scenario_name']] = analysis
+        # Track if scenarios differ by num_units so we can decide whether to
+        # include detection_rate in the comparison (detection is independent
+        # from number of defence units and can add noise when sweeping units).
+        num_units_set.add(scenario_config.get('num_units', DEFAULT_CONFIG.get('num_units')))
+    
+    # Skapa jämförelsetabell
+    include_detection = True
+    # If scenarios vary by number of units, omit detection_rate from the
+    # comparison to avoid showing an unrelated metric
+    if len(num_units_set) > 1:
+        include_detection = False
+
+    def _row_for(data, include_detection: bool):
+        row = {
+            'Success Rate': f"{data['mean_success_rate']:.3f} ± {data['std_success_rate']:.3f}",
+            'Civil Risk': f"{data['mean_civil_risk']:.3f}",
+            'Drönare Passerade': f"{data['mean_passed']:.1f}",
+            'Missiler Använda': f"{data['mean_missiles_used']:.1f}"
+        }
+        if include_detection:
+            row['Detection Rate'] = f"{data['mean_detection_rate']:.3f}"
+        return row
+
+    comparison_df = pd.DataFrame({
+        name: _row_for(data, include_detection)
+        for name, data in all_results.items()
+    }).T
+    
+    print("\n" + "="*70)
+    print("JÄMFÖRELSETABELL")
+    print("="*70)
+    print(comparison_df)
+    
+    # Spara jämförelse
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Ensure top-level result directories exist (some flows use per-scenario dirs,
+    # but compare_scenarios writes to the shared reports/ and figures/ folders)
+    os.makedirs(os.path.join('simulation_results', 'reports'), exist_ok=True)
+    os.makedirs(os.path.join('simulation_results', 'figures'), exist_ok=True)
+
+    comparison_df.to_csv(f'simulation_results/reports/jamforelse_{timestamp}.csv')
+    print(f"\n✓ Jämförelse sparad: simulation_results/reports/jamforelse_{timestamp}.csv")
+    
+    # Visualisering
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig.suptitle('Scenariojämförelse', fontsize=16)
+    
+    names = list(all_results.keys())
+    success_rates = [all_results[n]['mean_success_rate'] for n in names]
+    detection_rates = [all_results[n]['mean_detection_rate'] for n in names]
+    civil_risks = [all_results[n]['mean_civil_risk'] for n in names]
+    
+    axes[0].bar(names, success_rates)
+    axes[0].set_ylabel('Medel Success Rate')
+    axes[0].set_title('Success Rate Jämförelse')
+    axes[0].tick_params(axis='x', rotation=45)
+    
+    axes[1].bar(names, detection_rates)
+    axes[1].set_ylabel('Medel Detection Rate')
+    axes[1].set_title('Detection Rate Jämförelse')
+    axes[1].tick_params(axis='x', rotation=45)
+    
+    axes[2].bar(names, civil_risks, color='red')
+    axes[2].set_ylabel('Medel Civil Risk')
+    axes[2].set_title('Civil Risk Jämförelse')
+    axes[2].tick_params(axis='x', rotation=45)
+    
+    plt.tight_layout()
+    # Ensure figures directory exists (defensive)
+    os.makedirs(os.path.join('simulation_results', 'figures'), exist_ok=True)
+    plt.savefig(f'simulation_results/figures/jamforelse_{timestamp}.png', dpi=300)
+    print(f"✓ Jämförelseplot sparad: simulation_results/figures/jamforelse_{timestamp}.png")
+    plt.show()
+
+
+def parameter_sweep(base_config: Dict, param_name: str, param_values: List,
+                   n_iterations: int = 300):
+    """
+    Testa en parameter systematiskt
+    
+    Args:
+        base_config: Bas-konfiguration
+        param_name: Vilken parameter att variera (t.ex. 'num_units')
+        param_values: Lista med värden att testa (t.ex. [2, 4, 6, 8, 10])
+        n_iterations: Antal iterationer per värde
+    """
+    print(f"\n{'='*70}")
+    print(f"PARAMETERSWEEP: {param_name}")
+    print(f"{'='*70}")
+    
+    results = []
+    
+    for value in param_values:
+        config = base_config.copy()
+        config[param_name] = value
+        config['scenario_name'] = f'{param_name}_{value}'
+        
+        print(f"\nTestar {param_name} = {value}...")
+        sim = MonteCarloSimulation(config)
+        sim.run_simulation(n_iterations, (50, 150))
+        analysis = sim.analyze_results()
+        
+        row = {
+            'param_value': value,
+            'success_rate': analysis['mean_success_rate'],
+            'civil_risk': analysis['mean_civil_risk']
+        }
+        # When sweeping number of defence units, detection_rate is not
+        # informative (it depends on sensors/environment, not unit count).
+        # Omit it to reduce noise in the result.
+        if param_name != 'num_units':
+            row['detection_rate'] = analysis['mean_detection_rate']
+
+        results.append(row)
+    
+    df = pd.DataFrame(results)
+    
+    # Plotta dynamically based on which metrics are present (detection_rate
+    # may be omitted when sweeping num_units)
+    metrics = ['success_rate', 'detection_rate', 'civil_risk']
+    metrics = [m for m in metrics if m in df.columns]
+
+    n = len(metrics)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4))
+    if n == 1:
+        axes = [axes]
+    fig.suptitle(f'Parametersweep: {param_name}', fontsize=16)
+
+    for ax, metric in zip(axes, metrics):
+        ax.plot(df['param_value'], df[metric], marker='o', linewidth=2,
+                color='orange' if metric == 'detection_rate' else ('red' if metric == 'civil_risk' else 'blue'))
+        ax.set_xlabel(param_name)
+        ylabel = ' '.join(metric.split('_')).title()
+        ax.set_ylabel(ylabel)
+        ax.set_title(f'{ylabel} vs {param_name}')
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.tight_layout()
+    # Ensure figures directory exists before saving
+    os.makedirs(os.path.join('simulation_results', 'figures'), exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    plt.savefig(f'simulation_results/figures/sweep_{param_name}_{timestamp}.png', dpi=300)
+    print(f"\n✓ Parametersweep plot sparad")
+    plt.show()
+    
+    return df
+
+
+def run_unified_training_sweep(n_total: int = 50000, 
+                               config_variants: Optional[List[Dict]] = None) -> pd.DataFrame:
+    """
+    Generate large unified dataset by random config sampling.
+    
+    This function creates a single CSV with all data combined from different
+    configurations (num_units, priority_strategy, etc.), randomly selected for
+    each iteration. This is ideal for AI training because:
+    - Single large dataset instead of fragmented folders
+    - Balanced representation of all configs
+    - Ready for direct use with ML algorithms
+    
+    Args:
+        n_total: Total number of samples to generate (e.g., 50000)
+        config_variants: List of config dicts with varying num_units/strategy.
+                        If None, generates all combinations of
+                        num_units in [2,4,5,6,8,10] and 
+                        priority_strategy in ['fastest_first', 'most_threat', 'random']
+    
+    Returns:
+        DataFrame with all results (also saved to CSV)
+    
+    Example:
+        df = run_unified_training_sweep(n_total=50000)
+        # Results saved to: simulation_results/training/unified_data_YYYYMMDD_HHMMSS.csv
+    """
+    
+    if config_variants is None:
+        # Generate all combinations of num_units and strategy
+        config_variants = []
+        for num_units in [2, 4, 5, 6, 8, 10]:
+            for strategy in ['fastest_first', 'most_threat', 'random']:
+                config_variants.append({
+                    'num_units': num_units,
+                    'priority_strategy': strategy
+                })
+    
+    print(f"\n{'='*70}")
+    print(f"UNIFIED TRAINING DATA GENERATION")
+    print(f"{'='*70}")
+    print(f"Total samples to generate: {n_total}")
+    print(f"Config variants: {len(config_variants)}")
+    print(f"{'='*70}\n")
+    
+    all_results = []
+    
+    for i in range(n_total):
+        # Randomly select config for this iteration
+        cfg = DEFAULT_CONFIG.copy()
+        cfg.update(random.choice(config_variants))
+        cfg['scenario_name'] = 'unified_training'
+        
+        # Create simulator and run single scenario
+        sim = MonteCarloSimulation(cfg)
+        result = sim.run_single_scenario(n_drones=np.random.randint(10, 200))
+        all_results.append(result)
+        
+        # Progress update
+        if (i + 1) % 5000 == 0:
+            progress = 100 * (i + 1) / n_total
+            print(f"Progress: {i + 1}/{n_total} ({progress:.1f}%)")
+    
+    # Create DataFrame and save
+    df = pd.DataFrame(all_results)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Ensure training directory exists
+    training_dir = os.path.join('simulation_results', 'training')
+    os.makedirs(training_dir, exist_ok=True)
+    
+    filename = os.path.join(training_dir, f'unified_data_{timestamp}.csv')
+    df.to_csv(filename, index=False)
+    
+    print(f"\n{'='*70}")
+    print(f"✓ UNIFIED TRAINING DATA READY")
+    print(f"{'='*70}")
+    print(f"Samples generated: {len(df)}")
+    print(f"Saved to: {filename}")
+    print(f"File size: {df.memory_usage(deep=True).sum() / 1024 / 1024:.1f} MB")
+    print(f"Columns: {len(df.columns)}")
+    print(f"\nColumn summary:")
+    print(df.info())
+    print(f"\nFirst few rows:")
+    print(df.head())
+    print(f"{'='*70}\n")
+    
+    return df
+
+
+# ============================================================================
+# STANDARDKONFIGURATION enligt dokumentet
+# ============================================================================
+
+DEFAULT_CONFIG = {
+    # Scenario info
+    'scenario_name': 'baseline',
+    # Default: no fixed seed so separate runs produce different random outcomes
+    'random_seed': None,
+    
+    # Försvarssystem
+    'num_units': 5,
+    'missiles_per_unit': (5, 15),
+    'priority_strategy': 'most_threat',  # 'fastest_first', 'most_threat', 'random'
+    
+    # Multilayer defense (tom lista = inaktiverad)
+    'layered_defense': [],  # Eller: ['long_range', 'medium_range', 'short_range']
+    
+    # Drone type modifiers (enligt dokumentet)
+    'drone_type_modifiers': {
+        'light': {'stealth': 1.2, 'speed': 1.1, 'threat': 1.0},
+        'medium': {'stealth': 1.0, 'speed': 1.0, 'threat': 1.2},
+        'heavy': {'stealth': 0.8, 'speed': 0.85, 'threat': 1.5}
+    },
+    
+    # Formation effects (enligt dokumentet)
+    'formation_effects': {
+        'tight': {'detection_modifier': 0.9, 'max_parallel': 1},
+        'medium': {'detection_modifier': 1.0, 'max_parallel': 2},
+        'spread': {'detection_modifier': 1.1, 'max_parallel': 3}
+    },
+    
+    # Layered defense specs (enligt dokumentet)
+    'layered_defense_specs': {
+        'long_range': {'p_detect': 0.7, 'p_intercept': 0.6},
+        'medium_range': {'p_detect': 0.8, 'p_intercept': 0.75},
+        'short_range': {'p_detect': 0.9, 'p_intercept': 0.85}
+    },
+    
+    # AI behavior modifiers (enligt dokumentet)
+    'ai_behavior_modifiers': {
+        'aggressive': 0.9,
+        'evasive': 0.7,
+        'coordinated': 0.8
+    }
+}
+
+
+# ============================================================================
+# EXEMPEL - Hur man använder koden (V4 - Unified Training)
+# ============================================================================
+
+if __name__ == "__main__":
+    print("\n" + "="*70)
+    print("MONTE CARLO-SIMULERING - LUFTFÖRSVAR MOT DRÖNARSVÄRMAR")
+    print("Gymnasiearbete - Version 4.0 (Unified Training)")
+    print("Följer dokumentet: 'Gymnasiearbete - Variabel lista.pdf'")
+    print("="*70 + "\n")
+    
+    # ========================================================================
+    # UNIFIED TRAINING DATA - Single command to generate all data
+    # ========================================================================
+    print("UNIFIED TRAINING: Generating 50,000 samples with random configs...")
+    df_training = run_unified_training_sweep(n_total=50000)
+    
+    # ========================================================================
+    # Optional: Run analysis/comparison on full unified dataset
+    # ========================================================================
+    print("\nUNIFIED DATA ANALYSIS:")
+    print(f"Success Rate (mean ± std): {df_training['success_rate'].mean():.3f} ± {df_training['success_rate'].std():.3f}")
+    print(f"Success Rate (min-max): {df_training['success_rate'].min():.3f} - {df_training['success_rate'].max():.3f}")
+    print(f"Civil Risk (mean): {df_training['civil_risk'].mean():.3f}")
+    print(f"Missiles Used (mean): {df_training['missiles_used'].mean():.1f}")
+    print("\n✓ Ready for AI training!")
+    print("="*70 + "\n")
+        
