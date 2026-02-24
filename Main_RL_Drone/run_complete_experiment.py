@@ -8,9 +8,6 @@ This script executes the complete thesis experimental pipeline:
 4. Perform statistical analysis
 5. Generate all visualizations
 6. Create summary report
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import time
@@ -70,15 +67,6 @@ def run_complete_experiment(
 ) -> Dict[str, Any]:
     """
     Run the complete experimental pipeline.
-    
-    Args:
-        training_timesteps: Number of timesteps for RL training
-        eval_scenarios: Number of Monte Carlo scenarios for evaluation
-        random_seed: Random seed for reproducibility
-        base_dir: Base directory for all results
-        
-    Returns:
-        Dictionary with all results and file paths
     """
     start_time = time.time()
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -372,12 +360,10 @@ if __name__ == "__main__":
     - random_seed: Change for different random scenarios
     """
     
-    # CRITICAL FIX: Increased from 50K to 500K timesteps for proper training
-    # Expected runtime: ~10-15 minutes (was ~60-75 seconds)
-    # Rationale: Agent needs more exploration to learn that firing weapons is beneficial
-    TRAINING_TIMESTEPS = 500_000  # 500K timesteps (10x increase)
-    EVAL_SCENARIOS = 1000         # 1000 scenarios per strategy
-    RANDOM_SEED = 42              # For reproducibility
+    # Configuration
+    TRAINING_TIMESTEPS = 50000  # 50K timesteps (~60-75 seconds)
+    EVAL_SCENARIOS = 1000       # 1000 scenarios per strategy
+    RANDOM_SEED = 42            # For reproducibility
     OUTPUT_DIR = "thesis_results"
     
     print("="*70)

@@ -1,0 +1,59 @@
+======================================================================
+MASTER'S THESIS EXPERIMENT SUMMARY
+======================================================================
+
+Timestamp: 20260223_225024
+Total execution time: 813.1s (13.6 minutes)
+
+CONFIGURATION
+----------------------------------------------------------------------
+  Training timesteps: 500,000
+  Evaluation scenarios: 100
+  Random seed: 42
+
+PERFORMANCE COMPARISON
+----------------------------------------------------------------------
+Metric                                Baseline        RL Agent     Improvement
+----------------------------------------------------------------------
+Penetration Rate                        30.48%          70.00%        -129.63%
+Cost-Exchange Ratio                      24.79           29.32         -18.28%
+Total Cost (M$)                          81.97          102.84         -25.46%
+
+EXECUTION TIMINGS
+----------------------------------------------------------------------
+  training                     797.8s ( 98.1%)
+  baseline_eval                  1.1s (  0.1%)
+  rl_eval                        9.6s (  1.2%)
+  statistical_analysis           0.0s (  0.0%)
+  visualization                  4.7s (  0.6%)
+  total                        813.1s (100.0%)
+
+OUTPUT FILES
+----------------------------------------------------------------------
+
+Models:
+  - thesis_results\trained_models\dqn_agent_20260223_225024_final
+
+Training Data:
+  - thesis_results\training_metrics\training_metrics_20260223_225024.csv
+
+Evaluation Results:
+  - thesis_results\evaluation_results\baseline_results_20260223_225024.csv
+  - thesis_results\evaluation_results\rl_results_20260223_225024.csv
+
+Statistical Analysis:
+  - thesis_results\statistical_analysis
+
+Visualizations:
+  - penetration_comparison_20260223_230353.png
+  - cost_exchange_comparison_20260223_230353.png
+  - cost_vs_penetration_20260223_230353.png
+  - weapon_usage_20260223_230353.png
+  - comprehensive_comparison_20260223_230353.png
+  - training_metrics_20260223_230353.png
+
+Reports:
+  - experiment_summary_20260223_225024.txt
+  - interpretation_20260223_225024.txt
+
+======================================================================

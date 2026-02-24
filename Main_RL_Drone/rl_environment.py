@@ -3,9 +3,6 @@ Reinforcement Learning Environment Module
 
 This module implements a Gym-compatible environment for training RL agents
 to defend against UAV swarm attacks. Compatible with Stable-Baselines3.
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import gymnasium as gym
@@ -42,18 +39,6 @@ class AirDefenseEnv(gym.Env):
     Episode Termination:
         - All UAVs neutralized (destroyed or penetrated)
         - Maximum steps reached (safety limit)
-    
-    Attributes:
-        swarm_size_range: Tuple of (min, max) UAV count for random initialization
-        kinetic_initial: Initial kinetic interceptor count
-        de_initial: Initial directed energy shot count
-        penetration_penalty: Cost penalty per penetrating UAV (USD)
-        distance_per_step: Distance UAVs advance per step (km)
-        max_steps: Maximum steps per episode
-    
-    Compatible with:
-        - Stable-Baselines3 (DQN, PPO, A2C, etc.)
-        - Standard Gym interface
     """
     
     # Environment metadata
@@ -72,16 +57,6 @@ class AirDefenseEnv(gym.Env):
     ):
         """
         Initialize the air defense environment.
-        
-        Args:
-            swarm_size_range: (min, max) UAV count for random initialization
-            kinetic_initial: Starting kinetic interceptors
-            de_initial: Starting directed energy shots
-            penetration_penalty: Cost per penetrating UAV in USD
-            distance_per_step: Distance UAVs advance per step in km
-            max_steps: Maximum steps before forced termination
-            normalize_observations: If True, normalize state to [0,1]
-            random_seed: Random seed for reproducibility
         """
         super().__init__()
         
@@ -143,12 +118,6 @@ class AirDefenseEnv(gym.Env):
     def seed(self, seed: Optional[int] = None) -> list:
         """
         Set random seed for reproducibility.
-        
-        Args:
-            seed: Random seed value
-            
-        Returns:
-            List containing the seed
         """
         if seed is not None:
             np.random.seed(seed)
@@ -163,13 +132,6 @@ class AirDefenseEnv(gym.Env):
         Reset the environment to start a new episode.
         
         Creates new UAV swarm with random size and fresh defense systems.
-        
-        Args:
-            seed: Random seed for this episode
-            options: Additional options (currently unused)
-            
-        Returns:
-            Tuple of (observation, info_dict)
         """
         # Set seed if provided
         if seed is not None:
@@ -212,17 +174,6 @@ class AirDefenseEnv(gym.Env):
     ) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """
         Execute one step in the environment.
-        
-        Args:
-            action: Action to take (0=kinetic, 1=DE, 2=skip)
-            
-        Returns:
-            Tuple of (observation, reward, terminated, truncated, info)
-            - observation: Current state after action
-            - reward: Reward received for this step
-            - terminated: True if episode ended naturally (all UAVs neutralized)
-            - truncated: True if episode ended due to step limit
-            - info: Additional information dictionary
         """
         # Validate action
         if not self.action_space.contains(action):
@@ -239,30 +190,19 @@ class AirDefenseEnv(gym.Env):
         # Execute action (fire weapon)
         success, cost, had_ammunition = self.defense.fire_weapon(weapon_type)
         
-        # Initialize reward components
-        reward = 0.0
-        uav_destroyed = False
-        
         # If weapon fired and hit, destroy nearest UAV
         if weapon_type != WeaponType.SKIP and had_ammunition and success:
             nearest_uav = self.swarm.get_nearest_threat()
             if nearest_uav is not None:
                 self.swarm.destroy_uav(nearest_uav)
-                uav_destroyed = True
-                # CRITICAL FIX: Give immediate positive reward for successful hit
-                # This teaches agent that firing and hitting = good!
-                reward += 50_000  # Immediate reward for destroying UAV
-        
-        # Subtract weapon cost (DE = $10K, Kinetic = $1M)
-        reward -= cost
         
         # Advance swarm toward target
         penetrated_this_step = self.swarm.advance_swarm(self.distance_per_step)
         
-        # CRITICAL FIX: Heavily penalize penetrations (changed from 1M to 10M)
-        # This makes stopping UAVs the PRIMARY goal, not saving money
+        # Calculate reward
+        # Negative cost of action + large penalty for penetrations
         penetration_cost = penetrated_this_step * self.penetration_penalty
-        reward -= penetration_cost
+        reward = -cost - penetration_cost
         
         # Track episode reward
         self.episode_reward += reward
@@ -282,7 +222,6 @@ class AirDefenseEnv(gym.Env):
             'action_taken': weapon_type.value,
             'weapon_success': success if had_ammunition else None,
             'had_ammunition': had_ammunition,
-            'uav_destroyed': uav_destroyed,  # Added for debugging reward shaping
             'cost_this_step': cost,
             'penetrated_this_step': penetrated_this_step,
             'penetration_cost_this_step': penetration_cost,
@@ -315,9 +254,6 @@ class AirDefenseEnv(gym.Env):
     def _get_observation(self) -> np.ndarray:
         """
         Get current state observation.
-        
-        Returns:
-            5-dimensional numpy array with current state
         """
         # Get raw state values
         remaining_uavs = self.swarm.get_alive_count()
@@ -354,12 +290,6 @@ class AirDefenseEnv(gym.Env):
     def render(self, mode: str = 'human') -> Optional[str]:
         """
         Render the environment state.
-        
-        Args:
-            mode: Rendering mode ('human' or 'ansi')
-            
-        Returns:
-            String representation if mode='ansi', None otherwise
         """
         if self.swarm is None or self.defense is None:
             return "Environment not initialized. Call reset() first."
@@ -408,9 +338,6 @@ class AirDefenseEnv(gym.Env):
     def get_episode_info(self) -> Dict[str, Any]:
         """
         Get comprehensive episode information.
-        
-        Returns:
-            Dictionary with episode statistics
         """
         if self.swarm is None or self.defense is None:
             return {}
@@ -433,173 +360,9 @@ class AirDefenseEnv(gym.Env):
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code for RL environment.
-    """
-    print("=" * 70)
-    print("RL ENVIRONMENT MODULE - DEMONSTRATION")
-    print("=" * 70)
-    
-    # Test 1: Environment initialization
-    print("\n[Test 1] Environment initialization:")
-    
-    env = AirDefenseEnv(
-        swarm_size_range=(50, 100),
-        random_seed=42
-    )
-    
-    print(f"  Action space: {env.action_space}")
-    print(f"  Observation space: {env.observation_space}")
-    print(f"  Observation shape: {env.observation_space.shape}")
-    
-    # Test 2: Reset and initial observation
-    print("\n[Test 2] Reset and initial observation:")
-    
-    obs, info = env.reset(seed=123)
-    print(f"  Initial observation: {obs}")
-    print(f"  Info: {info}")
-    print(f"  Observation in range: {env.observation_space.contains(obs)}")
-    
-    # Test 3: Taking actions
-    print("\n[Test 3] Taking actions:")
-    
-    env.render()
-    
-    actions = [1, 1, 1, 2, 0]  # DE, DE, DE, Skip, Kinetic
-    
-    for i, action in enumerate(actions, 1):
-        action_names = {0: "Kinetic", 1: "DE", 2: "Skip"}
-        print(f"\n  Step {i}: Action = {action_names[action]}")
-        
-        obs, reward, terminated, truncated, info = env.step(action)
-        
-        print(f"    Observation: {obs}")
-        print(f"    Reward: {reward:,.0f}")
-        print(f"    Terminated: {terminated}, Truncated: {truncated}")
-        print(f"    Remaining UAVs: {info['remaining_uavs']}")
-        print(f"    Penetrated this step: {info['penetrated_this_step']}")
-        
-        if terminated or truncated:
-            print(f"\n    Episode finished!")
-            break
-    
-    # Test 4: Complete episode with random actions
-    print("\n[Test 4] Complete episode with random actions:")
-    
-    env.reset(seed=456)
-    total_reward = 0
-    step_count = 0
-    
-    while True:
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        step_count += 1
-        
-        if terminated or truncated:
-            break
-    
-    print(f"  Episode completed in {step_count} steps")
-    print(f"  Total reward: {total_reward:,.0f}")
-    print(f"  Final info: {info}")
-    
-    # Test 5: Multiple episodes
-    print("\n[Test 5] Running 5 episodes:")
-    
-    episode_results = []
-    
-    for ep in range(5):
-        obs, info = env.reset(seed=100 + ep)
-        episode_reward = 0
-        steps = 0
-        
-        while True:
-            action = env.action_space.sample()
-            obs, reward, terminated, truncated, info = env.step(action)
-            episode_reward += reward
-            steps += 1
-            
-            if terminated or truncated:
-                break
-        
-        episode_results.append({
-            'episode': ep + 1,
-            'steps': steps,
-            'reward': episode_reward,
-            'swarm_size': info.get('episode_length', steps),
-            'penetration_rate': info.get('penetration_rate', 0),
-            'cost_exchange': info.get('cost_exchange_ratio', 0)
-        })
-        
-        print(f"  Episode {ep+1}: Steps={steps}, Reward={episode_reward:,.0f}, "
-              f"Pen={info.get('penetration_rate', 0)*100:.1f}%, "
-              f"CostEx={info.get('cost_exchange_ratio', 0):.2f}")
-    
-    # Test 6: Testing with greedy DE-first policy
-    print("\n[Test 6] Testing with greedy DE-first policy:")
-    
-    def greedy_de_policy(obs):
-        """Always use DE if available, else kinetic, else skip."""
-        # obs: [uavs, kinetic, de, cost, distance] (normalized)
-        if obs[2] > 0:  # DE available
-            return 1
-        elif obs[1] > 0:  # Kinetic available
-            return 0
-        else:
-            return 2
-    
-    env.reset(seed=999)
-    total_reward = 0
-    steps = 0
-    
-    while True:
-        obs_before = env._get_observation()
-        action = greedy_de_policy(obs_before)
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-        steps += 1
-        
-        if terminated or truncated:
-            break
-    
-    print(f"  Greedy policy: {steps} steps, {total_reward:,.0f} reward")
-    print(f"  Penetration: {info.get('penetration_rate', 0)*100:.1f}%")
-    print(f"  Cost-exchange: {info.get('cost_exchange_ratio', 0):.2f}")
-    
-    # Test 7: Observation normalization check
-    print("\n[Test 7] Observation normalization verification:")
-    
-    env.reset(seed=777)
-    obs_samples = []
-    
-    for _ in range(100):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        obs_samples.append(obs)
-        
-        if terminated or truncated:
-            env.reset()
-    
-    obs_array = np.array(obs_samples)
-    
-    print(f"  Observation mins: {obs_array.min(axis=0)}")
-    print(f"  Observation maxs: {obs_array.max(axis=0)}")
-    print(f"  All in [0,1]: {np.all(obs_array >= 0) and np.all(obs_array <= 1)}")
-    
-    # Test 8: Episode info retrieval
-    print("\n[Test 8] Episode info retrieval:")
-    
-    env.reset(seed=888)
-    for _ in range(10):
-        action = env.action_space.sample()
-        env.step(action)
-    
-    episode_info = env.get_episode_info()
-    print(f"  Episode info keys: {list(episode_info.keys())}")
-    print(f"  Current step: {episode_info['steps']}")
-    print(f"  Episode reward: {episode_info['episode_reward']:,.0f}")
-    
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("=" * 70)
-    print("\nEnvironment ready for RL training with Stable-Baselines3!")
+    env = AirDefenseEnv(swarm_size_range=(50, 150), random_seed=42)
+    obs, info = env.reset()
+    print(f"Obs shape: {obs.shape}, sample: {obs}")
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    print(f"Step: reward={reward:.0f}, done={terminated or truncated}")

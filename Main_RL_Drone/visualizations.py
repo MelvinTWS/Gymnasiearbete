@@ -3,9 +3,6 @@ Visualization Module
 
 This module creates publication-quality visualizations for comparing
 baseline and RL strategies for the master's thesis.
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import numpy as np
@@ -42,15 +39,6 @@ def plot_penetration_comparison(
 ) -> plt.Figure:
     """
     Create box plot comparing penetration rates.
-    
-    Args:
-        baseline_results: Baseline strategy results DataFrame
-        rl_results: RL strategy results DataFrame
-        save_path: Path to save figure (optional)
-        show: Whether to display the plot
-        
-    Returns:
-        Matplotlib figure object
     """
     fig, ax = plt.subplots(figsize=(8, 6))
     
@@ -133,15 +121,6 @@ def plot_cost_exchange_comparison(
 ) -> plt.Figure:
     """
     Create box plot comparing cost-exchange ratios.
-    
-    Args:
-        baseline_results: Baseline strategy results DataFrame
-        rl_results: RL strategy results DataFrame
-        save_path: Path to save figure (optional)
-        show: Whether to display the plot
-        
-    Returns:
-        Matplotlib figure object
     """
     fig, ax = plt.subplots(figsize=(8, 6))
     
@@ -224,15 +203,6 @@ def plot_cost_vs_penetration_scatter(
 ) -> plt.Figure:
     """
     Create scatter plot of total cost vs penetration rate.
-    
-    Args:
-        baseline_results: Baseline strategy results DataFrame
-        rl_results: RL strategy results DataFrame
-        save_path: Path to save figure (optional)
-        show: Whether to display the plot
-        
-    Returns:
-        Matplotlib figure object
     """
     fig, ax = plt.subplots(figsize=(10, 7))
     
@@ -328,14 +298,6 @@ def plot_training_metrics(
 ) -> plt.Figure:
     """
     Plot training metrics over time.
-    
-    Args:
-        metrics_file: Path to CSV file with training metrics
-        save_path: Path to save figure (optional)
-        show: Whether to display the plot
-        
-    Returns:
-        Matplotlib figure object
     """
     # Load metrics
     metrics_df = pd.read_csv(metrics_file)
@@ -441,15 +403,6 @@ def plot_weapon_usage_comparison(
 ) -> plt.Figure:
     """
     Create comparison of weapon usage patterns.
-    
-    Args:
-        baseline_results: Baseline strategy results DataFrame
-        rl_results: RL strategy results DataFrame
-        save_path: Path to save figure (optional)
-        show: Whether to display the plot
-        
-    Returns:
-        Matplotlib figure object
     """
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     
@@ -540,15 +493,6 @@ def plot_comprehensive_comparison(
 ) -> plt.Figure:
     """
     Create comprehensive multi-panel comparison figure.
-    
-    Args:
-        baseline_results: Baseline strategy results DataFrame
-        rl_results: RL strategy results DataFrame
-        save_path: Path to save figure (optional)
-        show: Whether to display the plot
-        
-    Returns:
-        Matplotlib figure object
     """
     fig = plt.figure(figsize=(16, 12))
     gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
@@ -654,16 +598,6 @@ def create_all_visualizations(
 ) -> Dict[str, str]:
     """
     Create all visualizations and save to directory.
-    
-    Args:
-        baseline_results: Baseline strategy results DataFrame
-        rl_results: RL strategy results DataFrame
-        training_metrics_file: Path to training metrics CSV (optional)
-        save_dir: Directory to save all figures
-        show: Whether to display plots
-        
-    Returns:
-        Dictionary mapping plot names to file paths
     """
     # Create save directory
     save_path = Path(save_dir)
@@ -726,143 +660,4 @@ def create_all_visualizations(
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code.
-    """
-    print("="*70)
-    print("VISUALIZATION MODULE - DEMONSTRATION")
-    print("="*70)
-    
-    # Test 1: Generate synthetic test data
-    print("\n[Test 1] Generate synthetic test data:")
-    
-    np.random.seed(42)
-    
-    # Simulate baseline results
-    n_scenarios = 100
-    baseline_data = {
-        'penetration_rate': np.random.normal(0.85, 0.05, n_scenarios),
-        'cost_exchange_ratio': np.random.normal(26.0, 2.0, n_scenarios),
-        'total_cost': np.random.normal(200e6, 20e6, n_scenarios),
-        'defense_cost': np.random.normal(1e6, 200e3, n_scenarios),
-        'penetration_cost': np.random.normal(199e6, 20e6, n_scenarios),
-        'uavs_destroyed': np.random.normal(50, 10, n_scenarios),
-        'uavs_penetrated': np.random.normal(250, 20, n_scenarios),
-        'kinetic_fired': np.random.normal(10, 3, n_scenarios),
-        'de_fired': np.random.normal(20, 5, n_scenarios)
-    }
-    
-    # Simulate RL results (better performance)
-    rl_data = {
-        'penetration_rate': np.random.normal(0.75, 0.05, n_scenarios),
-        'cost_exchange_ratio': np.random.normal(22.0, 2.0, n_scenarios),
-        'total_cost': np.random.normal(175e6, 18e6, n_scenarios),
-        'defense_cost': np.random.normal(1.2e6, 250e3, n_scenarios),
-        'penetration_cost': np.random.normal(174e6, 18e6, n_scenarios),
-        'uavs_destroyed': np.random.normal(75, 12, n_scenarios),
-        'uavs_penetrated': np.random.normal(225, 18, n_scenarios),
-        'kinetic_fired': np.random.normal(12, 4, n_scenarios),
-        'de_fired': np.random.normal(18, 5, n_scenarios)
-    }
-    
-    baseline_df = pd.DataFrame(baseline_data)
-    rl_df = pd.DataFrame(rl_data)
-    
-    print(f"  Baseline scenarios: {len(baseline_df)}")
-    print(f"  RL scenarios: {len(rl_df)}")
-    print(f"  Baseline penetration: {baseline_df['penetration_rate'].mean()*100:.2f}%")
-    print(f"  RL penetration: {rl_df['penetration_rate'].mean()*100:.2f}%")
-    
-    # Test 2: Create synthetic training metrics
-    print("\n[Test 2] Create synthetic training metrics:")
-    
-    n_episodes = 500
-    training_data = {
-        'timestep': np.arange(1, n_episodes + 1) * 100,
-        'episode_reward': -1e7 + np.cumsum(np.random.randn(n_episodes) * 1e5 + 2e4),
-        'episode_length': np.random.randint(80, 120, n_episodes),
-        'penetration_cost': 200e6 - np.cumsum(np.random.randn(n_episodes) * 1e5 + 5e4),
-        'defense_cost': np.random.normal(1e6, 200e3, n_episodes)
-    }
-    
-    training_df = pd.DataFrame(training_data)
-    training_file = "test_training_metrics.csv"
-    training_df.to_csv(training_file, index=False)
-    print(f"  Created: {training_file}")
-    print(f"  Episodes: {len(training_df)}")
-    
-    # Test 3: Individual plot tests
-    print("\n[Test 3] Test individual plot functions:")
-    print("  (Plots will not be displayed, only saved)")
-    
-    test_dir = Path("test_visualizations")
-    test_dir.mkdir(exist_ok=True)
-    
-    print("\n  Testing penetration comparison...")
-    plot_penetration_comparison(baseline_df, rl_df, 
-                                save_path=str(test_dir / "test_penetration.png"), 
-                                show=False)
-    
-    print("  Testing cost-exchange comparison...")
-    plot_cost_exchange_comparison(baseline_df, rl_df,
-                                  save_path=str(test_dir / "test_cost_exchange.png"),
-                                  show=False)
-    
-    print("  Testing scatter plot...")
-    plot_cost_vs_penetration_scatter(baseline_df, rl_df,
-                                     save_path=str(test_dir / "test_scatter.png"),
-                                     show=False)
-    
-    print("  Testing weapon usage...")
-    plot_weapon_usage_comparison(baseline_df, rl_df,
-                                save_path=str(test_dir / "test_weapons.png"),
-                                show=False)
-    
-    print("  Testing comprehensive comparison...")
-    plot_comprehensive_comparison(baseline_df, rl_df,
-                                 save_path=str(test_dir / "test_comprehensive.png"),
-                                 show=False)
-    
-    print("  Testing training metrics...")
-    plot_training_metrics(training_file,
-                         save_path=str(test_dir / "test_training.png"),
-                         show=False)
-    
-    # Test 4: Create all visualizations at once
-    print("\n[Test 4] Test create_all_visualizations():")
-    
-    saved_files = create_all_visualizations(
-        baseline_df,
-        rl_df,
-        training_metrics_file=training_file,
-        save_dir=str(test_dir),
-        show=False
-    )
-    
-    # Verify all files created
-    print("\n[Test 5] Verify all files created:")
-    all_files = list(test_dir.glob("*.png"))
-    print(f"  Total PNG files: {len(all_files)}")
-    
-    for f in sorted(all_files):
-        size_kb = f.stat().st_size / 1024
-        print(f"    - {f.name} ({size_kb:.1f} KB)")
-    
-    # Cleanup
-    print("\n[Test 6] Cleanup test files:")
-    import shutil
-    
-    if test_dir.exists():
-        shutil.rmtree(test_dir)
-        print(f"  Removed: {test_dir}")
-    
-    if Path(training_file).exists():
-        Path(training_file).unlink()
-        print(f"  Removed: {training_file}")
-    
-    print("\n" + "="*70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("="*70)
-    print("\nReady for thesis visualization with:")
-    print("  from visualizations import create_all_visualizations")
-    print("  files = create_all_visualizations(baseline_df, rl_df, save_dir='figures')")
+    print("Run evaluate_strategies.py first, then call create_all_visualizations().")

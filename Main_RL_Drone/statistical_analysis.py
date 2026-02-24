@@ -3,9 +3,6 @@ Statistical Analysis Module
 
 This module performs statistical tests to compare baseline and RL strategies
 for the master's thesis. Uses t-tests to determine statistical significance.
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import numpy as np
@@ -24,23 +21,6 @@ def perform_t_test(
 ) -> Dict[str, Any]:
     """
     Perform independent samples t-test.
-    
-    Args:
-        baseline_data: Baseline strategy metric values
-        rl_data: RL strategy metric values
-        alternative: Type of test ('two-sided', 'less', 'greater')
-        alpha: Significance level (default 0.05)
-        
-    Returns:
-        Dictionary containing:
-            - t_statistic: T-test statistic
-            - p_value: P-value
-            - significant: Whether result is statistically significant
-            - baseline_mean: Mean of baseline data
-            - rl_mean: Mean of RL data
-            - baseline_std: Standard deviation of baseline
-            - rl_std: Standard deviation of RL
-            - effect_size: Cohen's d effect size
     """
     # Perform t-test
     t_stat, p_value = stats.ttest_ind(baseline_data, rl_data, alternative=alternative)
@@ -79,14 +59,6 @@ def analyze_strategies(
 ) -> Dict[str, Dict[str, Any]]:
     """
     Perform comprehensive statistical analysis comparing strategies.
-    
-    Args:
-        baseline_results: DataFrame with baseline strategy results
-        rl_results: DataFrame with RL strategy results
-        alpha: Significance level for hypothesis tests
-        
-    Returns:
-        Dictionary of statistical test results for each metric
     """
     analysis = {}
     
@@ -125,13 +97,6 @@ def generate_summary_table(
 ) -> str:
     """
     Generate formatted summary table of statistical analysis.
-    
-    Args:
-        analysis: Dictionary of analysis results from analyze_strategies
-        format: Output format ('text', 'latex', 'markdown')
-        
-    Returns:
-        Formatted table string
     """
     if format == 'text':
         return _generate_text_table(analysis)
@@ -279,16 +244,6 @@ def analyze_and_save(
 ) -> Dict[str, Any]:
     """
     Perform analysis and save results to files.
-    
-    Args:
-        baseline_results: Baseline strategy results
-        rl_results: RL strategy results
-        save_dir: Directory to save results
-        alpha: Significance level
-        verbose: Print results
-        
-    Returns:
-        Dictionary of analysis results
     """
     # Create save directory
     save_path = Path(save_dir)
@@ -335,12 +290,6 @@ def analyze_and_save(
 def interpret_results(analysis: Dict[str, Dict[str, Any]]) -> str:
     """
     Generate interpretation of statistical results.
-    
-    Args:
-        analysis: Dictionary of analysis results
-        
-    Returns:
-        Formatted interpretation string
     """
     lines = []
     lines.append("\n" + "=" * 70)
@@ -427,127 +376,4 @@ def interpret_results(analysis: Dict[str, Dict[str, Any]]) -> str:
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code.
-    """
-    print("=" * 70)
-    print("STATISTICAL ANALYSIS MODULE - DEMONSTRATION")
-    print("=" * 70)
-    
-    # Test 1: Generate synthetic test data
-    print("\n[Test 1] Generate synthetic test data:")
-    
-    np.random.seed(42)
-    
-    # Simulate baseline: higher penetration, higher cost
-    baseline_data = {
-        'penetration_rate': np.random.normal(0.85, 0.05, 100),
-        'cost_exchange_ratio': np.random.normal(26.0, 2.0, 100),
-        'total_cost': np.random.normal(200e6, 20e6, 100),
-        'defense_cost': np.random.normal(1e6, 200e3, 100),
-        'penetration_cost': np.random.normal(199e6, 20e6, 100),
-        'uavs_destroyed': np.random.normal(50, 10, 100),
-        'uavs_penetrated': np.random.normal(250, 20, 100),
-        'kinetic_fired': np.random.normal(10, 3, 100),
-        'de_fired': np.random.normal(20, 5, 100)
-    }
-    
-    # Simulate RL: lower penetration, lower cost (better)
-    rl_data = {
-        'penetration_rate': np.random.normal(0.75, 0.05, 100),
-        'cost_exchange_ratio': np.random.normal(22.0, 2.0, 100),
-        'total_cost': np.random.normal(175e6, 18e6, 100),
-        'defense_cost': np.random.normal(1.2e6, 250e3, 100),
-        'penetration_cost': np.random.normal(174e6, 18e6, 100),
-        'uavs_destroyed': np.random.normal(75, 12, 100),
-        'uavs_penetrated': np.random.normal(225, 18, 100),
-        'kinetic_fired': np.random.normal(12, 4, 100),
-        'de_fired': np.random.normal(18, 5, 100)
-    }
-    
-    baseline_df = pd.DataFrame(baseline_data)
-    rl_df = pd.DataFrame(rl_data)
-    
-    print(f"  Generated {len(baseline_df)} baseline scenarios")
-    print(f"  Generated {len(rl_df)} RL scenarios")
-    
-    # Test 2: Perform single t-test
-    print("\n[Test 2] Single t-test on penetration rate:")
-    
-    result = perform_t_test(
-        baseline_df['penetration_rate'].values,
-        rl_df['penetration_rate'].values,
-        alternative='less'
-    )
-    
-    print(f"  Baseline mean: {result['baseline_mean']*100:.2f}%")
-    print(f"  RL mean: {result['rl_mean']*100:.2f}%")
-    print(f"  p-value: {result['p_value']:.6f}")
-    print(f"  Significant (α=0.05): {result['significant']}")
-    print(f"  Effect size (Cohen's d): {result['effect_size']:.3f}")
-    
-    # Test 3: Comprehensive analysis
-    print("\n[Test 3] Comprehensive statistical analysis:")
-    
-    analysis = analyze_strategies(baseline_df, rl_df, alpha=0.05)
-    
-    print(f"  Metrics analyzed: {len(analysis)}")
-    print(f"  Significant results: {sum(1 for r in analysis.values() if r['significant'])}")
-    
-    # Test 4: Generate text table
-    print("\n[Test 4] Generate formatted tables:")
-    
-    text_table = generate_summary_table(analysis, format='text')
-    print(text_table)
-    
-    # Test 5: Generate LaTeX table
-    print("\n[Test 5] LaTeX table (first 5 lines):")
-    latex_table = generate_summary_table(analysis, format='latex')
-    for line in latex_table.split('\n')[:5]:
-        print(f"  {line}")
-    print("  ...")
-    
-    # Test 6: Generate Markdown table
-    print("\n[Test 6] Markdown table (first 5 lines):")
-    markdown_table = generate_summary_table(analysis, format='markdown')
-    for line in markdown_table.split('\n')[:5]:
-        print(f"  {line}")
-    print("  ...")
-    
-    # Test 7: Save all formats
-    print("\n[Test 7] Save analysis to files:")
-    
-    analysis_results = analyze_and_save(
-        baseline_df,
-        rl_df,
-        save_dir="test_analysis",
-        alpha=0.05,
-        verbose=False
-    )
-    
-    analysis_dir = Path("test_analysis")
-    if analysis_dir.exists():
-        files = list(analysis_dir.glob("*"))
-        print(f"  Files created: {len(files)}")
-        for f in files:
-            print(f"    - {f.name}")
-    
-    # Test 8: Interpretation
-    print("\n[Test 8] Generate interpretation:")
-    
-    interpretation = interpret_results(analysis)
-    print(interpretation)
-    
-    # Cleanup
-    print("\n[Test 9] Cleanup test files:")
-    import shutil
-    if analysis_dir.exists():
-        shutil.rmtree(analysis_dir)
-        print(f"  Removed: test_analysis")
-    
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("=" * 70)
-    print("\nReady for thesis analysis with:")
-    print("  from statistical_analysis import analyze_and_save")
-    print("  analysis = analyze_and_save(baseline_df, rl_df, save_dir='results')")
+    print("Run evaluate_strategies.py first to generate results, then analyze.")

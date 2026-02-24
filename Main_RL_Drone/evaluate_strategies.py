@@ -3,9 +3,6 @@ Strategy Evaluation Module
 
 This module evaluates and compares the RL agent against the baseline strategy
 on standardized test scenarios for the master's thesis.
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import numpy as np
@@ -16,7 +13,7 @@ from datetime import datetime
 
 from stable_baselines3 import DQN
 from monte_carlo_runner import run_scenarios, save_results
-from baseline_strategy import nearest_threat_first_strategy
+from baseline_strategy import adaptive_10percent_baseline
 from defense_system import WeaponType
 from rl_environment import AirDefenseEnv
 
@@ -33,36 +30,27 @@ class RLStrategyWrapper:
     def __init__(
         self,
         model: DQN,
-        swarm_size_range: tuple = (100, 500),
+        swarm_size_range: tuple = (50, 150),
         deterministic: bool = False
     ):
         """
         Initialize the RL strategy wrapper.
-        
-        Args:
-            model: Trained DQN model
-            swarm_size_range: Range used during training
-            deterministic: If True, use deterministic policy (no exploration)
         """
         self.model = model
         self.swarm_size_range = swarm_size_range
         self.deterministic = deterministic
-        
+
         # Create environment for observation conversion
         self.env = AirDefenseEnv(swarm_size_range=swarm_size_range)
-        
+
         # Track current episode state
         self.current_swarm_size = None
+        self._initial_kinetic = 50   # Updated at step 1 of each episode
+        self._initial_de = 100       # Updated at step 1 of each episode
     
     def __call__(self, state: Dict[str, Any]) -> WeaponType:
         """
         Strategy function interface.
-        
-        Args:
-            state: State dictionary from combat simulation
-            
-        Returns:
-            WeaponType action to take
         """
         # Convert state dict to observation array
         obs = self._state_to_observation(state)
@@ -82,33 +70,24 @@ class RLStrategyWrapper:
     def _state_to_observation(self, state: Dict[str, Any]) -> np.ndarray:
         """
         Convert state dictionary to normalized observation array.
-        
-        Args:
-            state: State dictionary with keys:
-                - remaining_uavs
-                - remaining_kinetic
-                - remaining_de
-                - cumulative_cost
-                - nearest_distance
-                
-        Returns:
-            Normalized observation array [5,]
         """
-        # Infer swarm size if not set (from first state of episode)
+        # Infer swarm size and initial ammo at the first step of each episode
         if self.current_swarm_size is None or state['step'] == 1:
-            # Estimate from remaining UAVs (assumes episode start)
             self.current_swarm_size = max(
                 state['remaining_uavs'],
                 self.swarm_size_range[0]
             )
-        
-        # Normalize observation components
+            # Record initial ammo so normalization matches regardless of quantity
+            self._initial_kinetic = max(state['remaining_kinetic'], 1)
+            self._initial_de = max(state['remaining_de'], 1)
+
+        # Normalize observation components (fraction of remaining vs initial)
         remaining_uavs_norm = state['remaining_uavs'] / self.current_swarm_size
-        remaining_kinetic_norm = state['remaining_kinetic'] / 50  # Initial kinetic
-        remaining_de_norm = state['remaining_de'] / 100  # Initial DE
-        
-        # Normalize cost (using max expected cost)
-        max_cost = 50 * 1_000_000 + 100 * 10_000  # Kinetic + DE
+        remaining_kinetic_norm = state['remaining_kinetic'] / self._initial_kinetic
+        remaining_de_norm = state['remaining_de'] / self._initial_de
+
+        # Normalize cost (using max expected cost based on initial ammo)
+        max_cost = self._initial_kinetic * 1_000_000 + self._initial_de * 10_000
         cumulative_cost_norm = min(state['cumulative_cost'] / max_cost, 1.0)
         
         # Normalize distance
@@ -132,13 +111,6 @@ def create_rl_strategy(
 ) -> Callable[[Dict[str, Any]], WeaponType]:
     """
     Create an RL strategy function from a saved model.
-    
-    Args:
-        model_path: Path to saved DQN model
-        deterministic: If True, use deterministic policy
-        
-    Returns:
-        Strategy function compatible with combat simulation
     """
     model = DQN.load(model_path)
     wrapper = RLStrategyWrapper(model, deterministic=deterministic)
@@ -147,36 +119,28 @@ def create_rl_strategy(
 
 def evaluate_baseline(
     num_scenarios: int = 1000,
-    swarm_size_range: tuple = (100, 500),
+    swarm_size_range: tuple = (50, 150),
     random_seed: int = 42,
     save_path: Optional[str] = None,
     verbose: bool = True
 ) -> pd.DataFrame:
     """
     Evaluate baseline strategy on test scenarios.
-    
-    Args:
-        num_scenarios: Number of test scenarios
-        swarm_size_range: Range of swarm sizes
-        random_seed: Random seed for reproducibility
-        save_path: Path to save results (if provided)
-        verbose: Show progress
-        
-    Returns:
-        DataFrame of results
     """
     if verbose:
         print("\n" + "=" * 70)
-        print("EVALUATING BASELINE STRATEGY")
+        print("EVALUATING BASELINE STRATEGY (Adaptive 10% Target)")
         print("=" * 70)
     
     results = run_scenarios(
-        strategy=nearest_threat_first_strategy,
+        strategy=adaptive_10percent_baseline,
         num_scenarios=num_scenarios,
         swarm_size_range=swarm_size_range,
+        kinetic_quantity=800,
+        de_quantity=150,
         random_seed=random_seed,
         verbose=verbose,
-        strategy_name="Baseline"
+        strategy_name="Adaptive_10pct_Baseline"
     )
     
     if save_path:
@@ -190,7 +154,7 @@ def evaluate_baseline(
 def evaluate_rl_agent(
     model_path: str,
     num_scenarios: int = 1000,
-    swarm_size_range: tuple = (100, 500),
+    swarm_size_range: tuple = (50, 150),
     random_seed: int = 42,
     deterministic: bool = False,
     save_path: Optional[str] = None,
@@ -198,18 +162,6 @@ def evaluate_rl_agent(
 ) -> pd.DataFrame:
     """
     Evaluate trained RL agent on test scenarios.
-    
-    Args:
-        model_path: Path to trained DQN model
-        num_scenarios: Number of test scenarios
-        swarm_size_range: Range of swarm sizes
-        random_seed: Random seed for reproducibility
-        deterministic: Use deterministic policy
-        save_path: Path to save results (if provided)
-        verbose: Show progress
-        
-    Returns:
-        DataFrame of results
     """
     if verbose:
         print("\n" + "=" * 70)
@@ -225,6 +177,8 @@ def evaluate_rl_agent(
         strategy=rl_strategy,
         num_scenarios=num_scenarios,
         swarm_size_range=swarm_size_range,
+        kinetic_quantity=800,
+        de_quantity=150,
         random_seed=random_seed,
         verbose=verbose,
         strategy_name="RL_Agent"
@@ -245,14 +199,6 @@ def compare_strategies(
 ) -> Dict[str, Any]:
     """
     Compare baseline and RL agent results.
-    
-    Args:
-        baseline_results: DataFrame from baseline evaluation
-        rl_results: DataFrame from RL evaluation
-        verbose: Print comparison summary
-        
-    Returns:
-        Dictionary with comparison statistics
     """
     comparison = {}
     
@@ -330,7 +276,7 @@ def compare_strategies(
 def evaluate_both_strategies(
     model_path: str,
     num_scenarios: int = 1000,
-    swarm_size_range: tuple = (100, 500),
+    swarm_size_range: tuple = (50, 150),
     random_seed: int = 42,
     deterministic: bool = False,
     save_dir: str = "evaluation_results",
@@ -338,18 +284,6 @@ def evaluate_both_strategies(
 ) -> tuple:
     """
     Evaluate both baseline and RL strategies and compare.
-    
-    Args:
-        model_path: Path to trained DQN model
-        num_scenarios: Number of test scenarios
-        swarm_size_range: Range of swarm sizes
-        random_seed: Random seed for reproducibility
-        deterministic: Use deterministic RL policy
-        save_dir: Directory to save results
-        verbose: Show progress and results
-        
-    Returns:
-        Tuple of (baseline_results, rl_results, comparison)
     """
     save_path = Path(save_dir)
     save_path.mkdir(parents=True, exist_ok=True)
@@ -395,124 +329,14 @@ def evaluate_both_strategies(
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code.
-    """
-    print("=" * 70)
-    print("STRATEGY EVALUATION MODULE - DEMONSTRATION")
-    print("=" * 70)
-    
-    # Test 1: Create a simple test RL model
-    print("\n[Test 1] Training a small test RL model:")
-    
-    from train_agent import train_dqn_agent
-    
-    model, metrics, model_path = train_dqn_agent(
-        total_timesteps=5_000,
-        swarm_size_range=(50, 100),
-        save_dir="test_eval",
-        model_name="test_model",
-        checkpoint_freq=10000,
-        eval_freq=10000,
-        verbose=0
-    )
-    
-    print(f"  Test model saved to: {model_path}")
-    
-    # Test 2: Create RL strategy wrapper
-    print("\n[Test 2] Testing RL strategy wrapper:")
-    
-    rl_strategy = create_rl_strategy(str(model_path), deterministic=True)
-    
-    # Test with sample state
-    test_state = {
-        'remaining_uavs': 50,
-        'remaining_kinetic': 25,
-        'remaining_de': 50,
-        'cumulative_cost': 1000000,
-        'nearest_distance': 40.0,
-        'step': 5
-    }
-    
-    action = rl_strategy(test_state)
-    print(f"  Sample state: {test_state}")
-    print(f"  RL action: {action.value}")
-    
-    # Test 3: Evaluate baseline on small set
-    print("\n[Test 3] Evaluating baseline (10 scenarios):")
-    
-    baseline_results = evaluate_baseline(
-        num_scenarios=10,
-        swarm_size_range=(50, 100),
-        random_seed=42,
-        save_path=None,
-        verbose=False
-    )
-    
-    print(f"  Scenarios: {len(baseline_results)}")
-    print(f"  Mean penetration: {baseline_results['penetration_rate'].mean()*100:.2f}%")
-    print(f"  Mean cost-exchange: {baseline_results['cost_exchange_ratio'].mean():.2f}")
-    
-    # Test 4: Evaluate RL agent on small set
-    print("\n[Test 4] Evaluating RL agent (10 scenarios):")
-    
-    rl_results = evaluate_rl_agent(
-        model_path=str(model_path),
-        num_scenarios=10,
-        swarm_size_range=(50, 100),
-        random_seed=42,
-        deterministic=True,
-        save_path=None,
-        verbose=False
-    )
-    
-    print(f"  Scenarios: {len(rl_results)}")
-    print(f"  Mean penetration: {rl_results['penetration_rate'].mean()*100:.2f}%")
-    print(f"  Mean cost-exchange: {rl_results['cost_exchange_ratio'].mean():.2f}")
-    
-    # Test 5: Compare strategies
-    print("\n[Test 5] Comparing strategies:")
-    
-    comparison = compare_strategies(baseline_results, rl_results, verbose=True)
-    
-    # Test 6: Full evaluation pipeline
-    print("\n[Test 6] Full evaluation pipeline (20 scenarios):")
-    
-    baseline_full, rl_full, comparison_full = evaluate_both_strategies(
-        model_path=str(model_path),
-        num_scenarios=20,
-        swarm_size_range=(50, 100),
-        random_seed=999,
-        deterministic=True,
-        save_dir="test_eval_results",
-        verbose=True
-    )
-    
-    # Test 7: Verify saved files
-    print("\n[Test 7] Verify saved files:")
-    
-    eval_dir = Path("test_eval_results")
-    if eval_dir.exists():
-        files = list(eval_dir.glob("*.csv"))
-        print(f"  CSV files created: {len(files)}")
-        for f in files:
-            print(f"    - {f.name}")
-    
-    # Cleanup
-    print("\n[Test 8] Cleanup test files:")
-    import shutil
-    
-    for cleanup_dir in ["test_eval", "test_eval_results"]:
-        if Path(cleanup_dir).exists():
-            shutil.rmtree(cleanup_dir)
-            print(f"  Removed: {cleanup_dir}")
-    
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("=" * 70)
-    print("\nReady for full evaluation with:")
-    print("  from evaluate_strategies import evaluate_both_strategies")
-    print("  baseline, rl, comp = evaluate_both_strategies(")
-    print("      model_path='trained_models/dqn_final.zip',")
-    print("      num_scenarios=1000")
-    print("  )")
+    import os
+    model_path = "thesis_results/trained_models/best_model/best_model.zip"
+    if os.path.exists(model_path):
+        baseline, rl, comp = evaluate_both_strategies(
+            model_path=model_path,
+            num_scenarios=100,
+            random_seed=42,
+            verbose=True
+        )
+    else:
+        print("Train an agent first with run_complete_experiment.py")

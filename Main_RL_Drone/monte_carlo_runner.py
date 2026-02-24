@@ -4,9 +4,6 @@ Monte Carlo Scenario Runner Module
 This module provides batch execution of combat simulations for statistical
 evaluation. Runs multiple scenarios with different random seeds to generate
 robust performance metrics.
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import numpy as np
@@ -25,8 +22,8 @@ def run_scenarios(
     strategy: Callable[[Dict[str, Any]], WeaponType],
     num_scenarios: int = 1000,
     swarm_size_range: tuple = (100, 500),
-    kinetic_quantity: int = 50,
-    de_quantity: int = 100,
+    kinetic_quantity: int = 800,
+    de_quantity: int = 150,
     random_seed: Optional[int] = None,
     verbose: bool = True,
     strategy_name: str = "Unknown"
@@ -38,53 +35,6 @@ def run_scenarios(
     - Random swarm size (uniform distribution within range)
     - Random weapon success rates (stochastic)
     - Random engagement outcomes
-    
-    Args:
-        strategy: Strategy function that takes state dict and returns WeaponType
-        num_scenarios: Number of scenarios to run
-        swarm_size_range: Tuple of (min, max) swarm size (inclusive)
-        kinetic_quantity: Initial kinetic interceptors per scenario
-        de_quantity: Initial directed energy shots per scenario
-        random_seed: Base random seed (if None, uses current time)
-        verbose: If True, show progress bar and summary
-        strategy_name: Name of strategy for reporting
-        
-    Returns:
-        pandas DataFrame with one row per scenario containing all metrics:
-            - scenario_id: Scenario number (0 to num_scenarios-1)
-            - random_seed: Seed used for this scenario
-            - swarm_size: Number of UAVs in swarm
-            - uavs_destroyed: UAVs destroyed by weapons
-            - uavs_penetrated: UAVs that reached target
-            - penetration_rate: Fraction penetrated (0-1)
-            - defense_cost: Cost of weapons fired
-            - attack_cost: Cost of attacking swarm
-            - penetration_cost: Penalty for penetrations
-            - total_cost: defense_cost + penetration_cost
-            - cost_exchange_ratio: total_cost / attack_cost
-            - kinetic_fired: Kinetic interceptors used
-            - de_fired: Directed energy shots used
-            - kinetic_hits: Successful kinetic intercepts
-            - de_hits: Successful DE intercepts
-            - kinetic_accuracy: Kinetic hit rate (or None)
-            - de_accuracy: DE hit rate (or None)
-            - overall_accuracy: Combined hit rate (or None)
-            - steps: Simulation steps
-            - termination_reason: Why simulation ended
-            - strategy_name: Name of strategy used
-            - timestamp: When scenario was run
-            
-    Raises:
-        ValueError: If parameters are invalid
-        
-    Example:
-        >>> from baseline_strategy import nearest_threat_first_strategy
-        >>> results = run_scenarios(
-        ...     strategy=nearest_threat_first_strategy,
-        ...     num_scenarios=100,
-        ...     strategy_name="Baseline"
-        ... )
-        >>> print(results['cost_exchange_ratio'].mean())
     """
     # Validate inputs
     if num_scenarios <= 0:
@@ -140,7 +90,12 @@ def run_scenarios(
         # Create and run simulation
         sim = CombatSimulation(
             swarm_size=swarm_size,
-            random_seed=seed
+            random_seed=seed,
+            distance_per_step=5.0,
+            penalty_random_range=(1_000_000.0, 6_000_000.0),
+            critical_penalty=10_000_000.0,
+            critical_probability=0.2,
+            max_steps=200
         )
         
         # Ensure correct weapon quantities
@@ -208,12 +163,6 @@ def run_scenarios(
 def _get_summary_statistics(df: pd.DataFrame) -> str:
     """
     Generate summary statistics from scenario results.
-    
-    Args:
-        df: DataFrame of scenario results
-        
-    Returns:
-        Formatted string with summary statistics
     """
     stats = []
     stats.append("SUMMARY STATISTICS")
@@ -275,19 +224,6 @@ def save_results(
 ) -> Path:
     """
     Save scenario results to CSV file.
-    
-    Args:
-        df: DataFrame of results to save
-        filepath: Path to save file (can include or exclude .csv extension)
-        include_timestamp: If True, append timestamp to filename
-        
-    Returns:
-        Path object of saved file
-        
-    Example:
-        >>> results = run_scenarios(...)
-        >>> path = save_results(results, "baseline_results")
-        >>> print(f"Saved to {path}")
     """
     filepath = Path(filepath)
     
@@ -313,15 +249,6 @@ def save_results(
 def load_results(filepath: str) -> pd.DataFrame:
     """
     Load scenario results from CSV file.
-    
-    Args:
-        filepath: Path to CSV file
-        
-    Returns:
-        DataFrame of results
-        
-    Example:
-        >>> df = load_results("baseline_results.csv")
     """
     return pd.read_csv(filepath)
 
@@ -334,15 +261,6 @@ def compare_strategies(
 ) -> str:
     """
     Compare results from two strategies.
-    
-    Args:
-        df1: Results from first strategy
-        df2: Results from second strategy
-        name1: Name of first strategy
-        name2: Name of second strategy
-        
-    Returns:
-        Formatted comparison string
     """
     comparison = []
     comparison.append(f"\n{'='*70}")
@@ -376,136 +294,13 @@ def compare_strategies(
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code for Monte Carlo runner.
-    """
-    print("=" * 70)
-    print("MONTE CARLO RUNNER MODULE - DEMONSTRATION")
-    print("=" * 70)
-    
-    from baseline_strategy import nearest_threat_first_strategy
-    
-    # Test 1: Run small batch of scenarios
-    print("\n[Test 1] Running 10 scenarios with baseline strategy:")
-    
+    from baseline_strategy import adaptive_10percent_baseline
     results = run_scenarios(
-        strategy=nearest_threat_first_strategy,
-        num_scenarios=10,
+        strategy=adaptive_10percent_baseline,
+        num_scenarios=20,
         swarm_size_range=(50, 150),
         random_seed=42,
         verbose=True,
         strategy_name="Baseline"
     )
-    
-    print(f"\nDataFrame shape: {results.shape}")
-    print(f"Columns: {list(results.columns[:10])}...")
-    
-    # Test 2: Examine individual scenarios
-    print("\n[Test 2] First 5 scenarios summary:")
-    print(results[['scenario_id', 'swarm_size', 'penetration_rate', 
-                   'cost_exchange_ratio', 'total_cost']].head())
-    
-    # Test 3: Save and load results
-    print("\n[Test 3] Save and load results:")
-    
-    save_path = save_results(
-        results,
-        "test_results",
-        include_timestamp=False
-    )
-    print(f"  Saved to: {save_path}")
-    
-    loaded_results = load_results(save_path)
-    print(f"  Loaded shape: {loaded_results.shape}")
-    print(f"  Data integrity check: {results.equals(loaded_results)}")
-    
-    # Clean up test file
-    if save_path.exists():
-        save_path.unlink()
-        print(f"  Test file deleted")
-    
-    # Test 4: Larger batch for statistics
-    print("\n[Test 4] Running 100 scenarios for robust statistics:")
-    
-    results_large = run_scenarios(
-        strategy=nearest_threat_first_strategy,
-        num_scenarios=100,
-        swarm_size_range=(100, 500),
-        random_seed=123,
-        verbose=True,
-        strategy_name="Baseline-100"
-    )
-    
-    # Test 5: Compare two different configurations
-    print("\n[Test 5] Comparing two weapon configurations:")
-    
-    # Configuration 1: Standard (50 kinetic, 100 DE)
-    results_config1 = run_scenarios(
-        strategy=nearest_threat_first_strategy,
-        num_scenarios=50,
-        swarm_size_range=(100, 300),
-        kinetic_quantity=50,
-        de_quantity=100,
-        random_seed=200,
-        verbose=False,
-        strategy_name="Standard"
-    )
-    
-    # Configuration 2: More weapons (100 kinetic, 200 DE)
-    results_config2 = run_scenarios(
-        strategy=nearest_threat_first_strategy,
-        num_scenarios=50,
-        swarm_size_range=(100, 300),
-        kinetic_quantity=100,
-        de_quantity=200,
-        random_seed=200,  # Same seed for fair comparison
-        verbose=False,
-        strategy_name="Enhanced"
-    )
-    
-    print(compare_strategies(results_config1, results_config2, "Standard", "Enhanced"))
-    
-    # Test 6: Distribution analysis
-    print("\n[Test 6] Analyzing metric distributions:")
-    
-    print(f"\nPenetration Rate Distribution:")
-    print(results_large['penetration_rate'].describe())
-    
-    print(f"\nCost-Exchange Ratio Distribution:")
-    print(results_large['cost_exchange_ratio'].describe())
-    
-    # Test 7: Identify best and worst scenarios
-    print("\n[Test 7] Best and worst performing scenarios:")
-    
-    best_scenario = results_large.loc[results_large['cost_exchange_ratio'].idxmin()]
-    worst_scenario = results_large.loc[results_large['cost_exchange_ratio'].idxmax()]
-    
-    print(f"\n  Best (lowest cost-exchange):")
-    print(f"    Scenario: {best_scenario['scenario_id']}")
-    print(f"    Swarm: {best_scenario['swarm_size']} UAVs")
-    print(f"    Penetration: {best_scenario['penetration_rate']*100:.1f}%")
-    print(f"    Cost-exchange: {best_scenario['cost_exchange_ratio']:.2f}")
-    
-    print(f"\n  Worst (highest cost-exchange):")
-    print(f"    Scenario: {worst_scenario['scenario_id']}")
-    print(f"    Swarm: {worst_scenario['swarm_size']} UAVs")
-    print(f"    Penetration: {worst_scenario['penetration_rate']*100:.1f}%")
-    print(f"    Cost-exchange: {worst_scenario['cost_exchange_ratio']:.2f}")
-    
-    # Test 8: Error handling
-    print("\n[Test 8] Error handling:")
-    
-    try:
-        run_scenarios(nearest_threat_first_strategy, num_scenarios=-10)
-    except ValueError as e:
-        print(f"  ✓ Caught expected error: {e}")
-    
-    try:
-        run_scenarios(nearest_threat_first_strategy, swarm_size_range=(500, 100))
-    except ValueError as e:
-        print(f"  ✓ Caught expected error: {e}")
-    
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("=" * 70)
-    print("\nMonte Carlo runner ready for full evaluation!")
+    print(results[["penetration_rate", "defense_cost", "cost_exchange_ratio"]].describe())

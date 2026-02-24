@@ -3,9 +3,6 @@ UAV Swarm Module
 
 This module implements the UAV swarm model for air defense simulation.
 Models a Shahed-136 style drone swarm with linear approach dynamics.
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import numpy as np
@@ -19,20 +16,11 @@ class UAVSwarm:
     The swarm uses a simplified linear approach model where UAVs travel
     in straight lines toward the defended target. Each UAV has binary
     status (alive or destroyed) and uniform cost.
-    
-    Attributes:
-        initial_size (int): Original number of UAVs in the swarm
-        uav_cost (float): Cost per UAV in USD (default: $35,000)
-        alive_uavs (np.ndarray): Boolean array indicating alive status
-        destroyed_count (int): Number of destroyed UAVs
-        penetration_count (int): Number of UAVs that reached target
-        distances (np.ndarray): Current distance of each UAV from target (km)
-        initial_distance (float): Starting distance from target (km)
     """
     
     # Class constants
     DEFAULT_UAV_COST = 35000.0  # USD per UAV
-    DEFAULT_INITIAL_DISTANCE = 100.0  # km from target
+    DEFAULT_INITIAL_DISTANCE = 1000.0  # km from target (allows 200 steps at 5km/step)
     MIN_SWARM_SIZE = 100
     MAX_SWARM_SIZE = 500
     
@@ -45,15 +33,6 @@ class UAVSwarm:
     ):
         """
         Initialize a UAV swarm.
-        
-        Args:
-            swarm_size: Number of UAVs (if None, randomly sampled from 100-500)
-            uav_cost: Cost per UAV in USD
-            initial_distance: Starting distance from target in km
-            random_seed: Random seed for reproducibility
-            
-        Raises:
-            ValueError: If swarm_size is outside valid range or negative values provided
         """
         # Set random seed if provided
         if random_seed is not None:
@@ -81,8 +60,11 @@ class UAVSwarm:
         
         # Initialize swarm state
         self.alive_uavs = np.ones(self.initial_size, dtype=bool)
+        self.targeted_uavs = np.zeros(self.initial_size, dtype=bool)
+        self.passed_uavs = np.zeros(self.initial_size, dtype=bool)
         self.destroyed_count = 0
         self.penetration_count = 0
+        self.passed_count = 0
         
         # Initialize distances (all start at same distance)
         self.distances = np.full(self.initial_size, initial_distance, dtype=float)
@@ -90,27 +72,18 @@ class UAVSwarm:
     def get_alive_count(self) -> int:
         """
         Get the number of currently alive UAVs.
-        
-        Returns:
-            Number of UAVs still alive
         """
         return int(np.sum(self.alive_uavs))
     
     def get_alive_indices(self) -> np.ndarray:
         """
         Get indices of all alive UAVs.
-        
-        Returns:
-            Array of indices where UAVs are still alive
         """
         return np.where(self.alive_uavs)[0]
     
     def get_nearest_threat(self) -> Optional[int]:
         """
         Find the index of the nearest alive UAV to the target.
-        
-        Returns:
-            Index of nearest alive UAV, or None if all destroyed
         """
         alive_indices = self.get_alive_indices()
         
@@ -128,9 +101,6 @@ class UAVSwarm:
     def get_nearest_threat_distance(self) -> Optional[float]:
         """
         Get the distance of the nearest alive UAV.
-        
-        Returns:
-            Distance in km, or None if no UAVs alive
         """
         nearest_idx = self.get_nearest_threat()
         
@@ -139,18 +109,43 @@ class UAVSwarm:
         
         return float(self.distances[nearest_idx])
     
+    def get_nearest_untargeted(self) -> Optional[int]:
+        """
+        Find the index of the nearest alive AND untargeted UAV.
+        Critical for one-shot-per-drone mechanic.
+        """
+        # Get alive UAVs that haven't been targeted yet
+        untargeted_alive = self.alive_uavs & ~self.targeted_uavs
+        untargeted_indices = np.where(untargeted_alive)[0]
+        
+        if len(untargeted_indices) == 0:
+            return None
+        
+        # Get distances of untargeted alive UAVs
+        untargeted_distances = self.distances[untargeted_indices]
+        
+        # Find the minimum distance
+        nearest_idx_in_untargeted = np.argmin(untargeted_distances)
+        
+        return untargeted_indices[nearest_idx_in_untargeted]
+    
+    def mark_as_passed(self, uav_index: int) -> bool:
+        """
+        Mark a UAV as "passed" (shot at but missed, can't target again).
+        """
+        if uav_index < 0 or uav_index >= self.initial_size:
+            return False
+        
+        if not self.passed_uavs[uav_index]:
+            self.passed_uavs[uav_index] = True
+            self.passed_count += 1
+            return True
+        
+        return False
+    
     def destroy_uav(self, uav_index: int) -> bool:
         """
         Destroy a specific UAV.
-        
-        Args:
-            uav_index: Index of the UAV to destroy
-            
-        Returns:
-            True if UAV was destroyed, False if already destroyed or invalid index
-            
-        Raises:
-            IndexError: If uav_index is out of bounds
         """
         if uav_index < 0 or uav_index >= self.initial_size:
             raise IndexError(
@@ -170,15 +165,6 @@ class UAVSwarm:
         
         UAVs that reach distance <= 0 are considered to have penetrated
         the defense and are counted as successful attacks.
-        
-        Args:
-            distance_increment: Distance to advance in km (positive value)
-            
-        Returns:
-            Number of UAVs that penetrated in this step
-            
-        Raises:
-            ValueError: If distance_increment is negative
         """
         if distance_increment < 0:
             raise ValueError(
@@ -210,18 +196,12 @@ class UAVSwarm:
     def get_total_attack_cost(self) -> float:
         """
         Calculate the total cost of the attacking swarm.
-        
-        Returns:
-            Total cost in USD (swarm_size × uav_cost)
         """
         return self.initial_size * self.uav_cost
     
     def get_penetration_rate(self) -> float:
         """
         Calculate the penetration rate (fraction of UAVs that got through).
-        
-        Returns:
-            Penetration rate as decimal (0.0 to 1.0)
         """
         if self.initial_size == 0:
             return 0.0
@@ -231,9 +211,6 @@ class UAVSwarm:
     def get_destruction_rate(self) -> float:
         """
         Calculate the destruction rate (fraction of UAVs destroyed).
-        
-        Returns:
-            Destruction rate as decimal (0.0 to 1.0)
         """
         if self.initial_size == 0:
             return 0.0
@@ -243,26 +220,12 @@ class UAVSwarm:
     def is_threat_eliminated(self) -> bool:
         """
         Check if all UAVs have been neutralized (destroyed or penetrated).
-        
-        Returns:
-            True if no alive UAVs remain, False otherwise
         """
         return self.get_alive_count() == 0
     
     def get_status_summary(self) -> Dict[str, float]:
         """
         Get a comprehensive summary of swarm status.
-        
-        Returns:
-            Dictionary containing:
-                - initial_size: Original swarm size
-                - alive: Current number of alive UAVs
-                - destroyed: Number of destroyed UAVs
-                - penetrated: Number of UAVs that got through
-                - total_cost: Total attack cost in USD
-                - penetration_rate: Fraction that penetrated
-                - destruction_rate: Fraction destroyed
-                - nearest_distance: Distance of nearest threat (or None)
         """
         return {
             'initial_size': self.initial_size,
@@ -278,9 +241,6 @@ class UAVSwarm:
     def reset(self, new_swarm_size: Optional[int] = None):
         """
         Reset the swarm to initial state (useful for re-running scenarios).
-        
-        Args:
-            new_swarm_size: New swarm size (if None, keeps current size)
         """
         if new_swarm_size is not None:
             if new_swarm_size < 1:
@@ -289,8 +249,11 @@ class UAVSwarm:
         
         # Reset all state
         self.alive_uavs = np.ones(self.initial_size, dtype=bool)
+        self.targeted_uavs = np.zeros(self.initial_size, dtype=bool)
+        self.passed_uavs = np.zeros(self.initial_size, dtype=bool)
         self.destroyed_count = 0
         self.penetration_count = 0
+        self.passed_count = 0
         self.distances = np.full(self.initial_size, self.initial_distance, dtype=float)
     
     def __repr__(self) -> str:
@@ -306,106 +269,6 @@ class UAVSwarm:
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code for UAVSwarm class.
-    """
-    print("=" * 70)
-    print("UAV SWARM MODULE - DEMONSTRATION")
-    print("=" * 70)
-    
-    # Test 1: Basic initialization with random size
-    print("\n[Test 1] Random swarm initialization:")
-    swarm1 = UAVSwarm(random_seed=42)
-    print(f"  Created: {swarm1}")
-    print(f"  Total attack cost: ${swarm1.get_total_attack_cost():,.2f}")
-    
-    # Test 2: Fixed size swarm
-    print("\n[Test 2] Fixed size swarm (200 UAVs):")
-    swarm2 = UAVSwarm(swarm_size=200, random_seed=123)
-    print(f"  Created: {swarm2}")
-    status = swarm2.get_status_summary()
-    print(f"  Status: {status}")
-    
-    # Test 3: Nearest threat detection
-    print("\n[Test 3] Nearest threat detection:")
-    print(f"  Nearest UAV index: {swarm2.get_nearest_threat()}")
-    print(f"  Nearest distance: {swarm2.get_nearest_threat_distance()} km")
-    
-    # Test 4: Destroying UAVs
-    print("\n[Test 4] Destroying UAVs:")
-    for i in range(5):
-        nearest = swarm2.get_nearest_threat()
-        success = swarm2.destroy_uav(nearest)
-        print(f"  Destroyed UAV #{nearest}: {success}")
-    print(f"  Remaining alive: {swarm2.get_alive_count()}")
-    
-    # Test 5: Advancing swarm
-    print("\n[Test 5] Advancing swarm toward target:")
-    initial_alive = swarm2.get_alive_count()
-    print(f"  Initial alive: {initial_alive}")
-    print(f"  Initial nearest distance: {swarm2.get_nearest_threat_distance()} km")
-    
-    # Advance in 10km increments
-    for step in range(1, 11):
-        penetrated = swarm2.advance_swarm(10.0)
-        if penetrated > 0:
-            print(f"  Step {step}: Advanced 10km, {penetrated} UAVs penetrated!")
-    
-    print(f"  Final nearest distance: {swarm2.get_nearest_threat_distance()} km")
-    print(f"  Total penetrations: {swarm2.penetration_count}")
-    
-    # Test 6: Simulating a complete engagement
-    print("\n[Test 6] Complete engagement simulation:")
-    swarm3 = UAVSwarm(swarm_size=50, random_seed=999)
-    print(f"  Starting with: {swarm3}")
-    
-    step = 0
-    while not swarm3.is_threat_eliminated():
-        step += 1
-        
-        # Destroy nearest threat (50% chance)
-        if np.random.random() < 0.5:
-            nearest = swarm3.get_nearest_threat()
-            if nearest is not None:
-                swarm3.destroy_uav(nearest)
-        
-        # Advance swarm
-        penetrated = swarm3.advance_swarm(5.0)
-        
-        if step % 5 == 0 or swarm3.is_threat_eliminated():
-            print(f"  Step {step}: {swarm3}")
-    
-    print("\n  Final statistics:")
-    final_status = swarm3.get_status_summary()
-    for key, value in final_status.items():
-        if isinstance(value, float) and value > 100:
-            print(f"    {key}: {value:,.2f}")
-        else:
-            print(f"    {key}: {value}")
-    
-    # Test 7: Reset functionality
-    print("\n[Test 7] Reset functionality:")
-    print(f"  Before reset: {swarm3}")
-    swarm3.reset()
-    print(f"  After reset: {swarm3}")
-    
-    # Test 8: Error handling
-    print("\n[Test 8] Error handling:")
-    try:
-        bad_swarm = UAVSwarm(swarm_size=-10)
-    except ValueError as e:
-        print(f"  ✓ Caught expected error: {e}")
-    
-    try:
-        swarm3.destroy_uav(999)
-    except IndexError as e:
-        print(f"  ✓ Caught expected error: {e}")
-    
-    try:
-        swarm3.advance_swarm(-5.0)
-    except ValueError as e:
-        print(f"  ✓ Caught expected error: {e}")
-    
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("=" * 70)
+    swarm = UAVSwarm(swarm_size=100, random_seed=42)
+    print(swarm)
+    print(swarm.get_status_summary())

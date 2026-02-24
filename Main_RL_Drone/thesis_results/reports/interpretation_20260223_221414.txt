@@ -1,0 +1,35 @@
+
+======================================================================
+STATISTICAL INTERPRETATION
+======================================================================
+
+Key Findings:
+
+Penetration Rate:
+  - Baseline: 57.02%
+  - RL Agent: 72.70%
+  - Improvement: -27.51%
+  - p-value: 0.000000
+  - Statistically significant: YES
+  - Effect size: -1.010 (large)
+
+Cost-Exchange Ratio:
+  - Baseline: $22
+  - RL Agent: $21
+  - Savings: $1 (+4.59%)
+  - p-value: 0.987239
+  - Statistically significant: NO
+  - Effect size: 0.318 (small)
+
+Total Cost:
+  - Baseline: $245,530,000
+  - RL Agent: $238,850,000
+  - Savings: $6,680,000 (+2.72%)
+  - p-value: 0.659554
+  - Statistically significant: NO
+  - Effect size: 0.058 (negligible)
+
+Conclusion:
+  Statistical significance was not achieved on key metrics.
+  Further training or parameter tuning may be required.
+======================================================================

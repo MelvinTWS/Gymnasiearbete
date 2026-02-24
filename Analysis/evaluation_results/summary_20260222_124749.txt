@@ -1,0 +1,29 @@
+Evaluation Summary - 100 scenarios
+================================================================================
+
+Metric                    Strategy                   Mean             Std
+--------------------------------------------------------------------------------
+penetration_rate          Kinetic-First            37.19%          20.05%
+penetration_rate          DE-First                 48.20%          16.00%
+penetration_rate          RL-Agent                 60.36%          16.66%
+
+cost_exchange_ratio       Kinetic-First             82.25           16.55
+cost_exchange_ratio       DE-First                  96.04           13.58
+cost_exchange_ratio       RL-Agent                 105.74           15.22
+
+defense_cost              Kinetic-First   $200,000,000.00 $          0.00
+defense_cost              DE-First        $ 51,500,000.00 $          0.00
+defense_cost              RL-Agent        $  1,500,000.00 $          0.00
+
+total_cost                Kinetic-First   $943,920,736.79 $505,792,140.10
+total_cost                DE-First        $1,073,870,766.62 $513,190,067.63
+total_cost                RL-Agent        $1,188,610,656.41 $554,568,169.80
+
+uavs_destroyed            Kinetic-First            170.52           21.65
+uavs_destroyed            DE-First                 141.47           20.53
+uavs_destroyed            RL-Agent                 103.67            7.18
+
+total_shots_fired         Kinetic-First            200.00            0.00
+total_shots_fired         DE-First                 200.00            0.00
+total_shots_fired         RL-Agent                 150.00            0.00
+

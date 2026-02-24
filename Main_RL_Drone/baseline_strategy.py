@@ -5,19 +5,83 @@ This module implements the baseline nearest-threat-first heuristic strategy
 for comparison against the RL agent. This is the traditional rule-based approach.
 
 Strategy Logic:
-1. If directed energy available → Use directed energy
-2. Elif kinetic available → Use kinetic
+1. If kinetic available → Use kinetic
+2. Elif directed energy available → Use directed energy
 3. Else → Skip (conserve resources)
 
-This greedy heuristic prioritizes cheap weapons and always engages the nearest
-threat without considering future scenarios or resource optimization.
-
-Author: Master's Thesis Project
-Date: January 2026
+This greedy heuristic prioritizes reliability first, then cost, and always engages
+the nearest threat without considering future scenarios or resource optimization.
 """
 
 from typing import Dict, Any
 from defense_system import WeaponType
+
+
+def adaptive_10percent_baseline(state: Dict[str, Any]) -> WeaponType:
+    """
+    Adaptive strategy targeting ≤10% penetration while minimizing cost.
+    
+    Strategy logic:
+    - Target: Keep penetration at or below 10% of initial swarm
+    - Cost-conscious: Prefer cheap DE when ahead of target
+    - Aggressive: Switch to expensive kinetic when falling behind target
+    - Adaptive: Adjusts based on current progress and remaining time
+    
+    This represents a "Ukrainian-style" maximum interception approach
+    with cost awareness.
+    """
+    initial_swarm = state.get('initial_swarm_size', 300)
+    remaining_uavs = state.get('uavs_remaining', 0)
+    current_step = state.get('current_step', 0)
+    max_steps = state.get('max_steps', 20)
+    kinetic_ammo = state.get('kinetic_remaining', 0)
+    de_ammo = state.get('de_remaining', 0)
+    penetrated = state.get('penetrated_count', 0)
+    passed = state.get('passed_count', 0)
+    
+    # Calculate 10% penetration target
+    max_acceptable_penetrations = initial_swarm * 0.10
+    
+    # Total "lost" drones (penetrated + passed/missed)
+    total_losses = penetrated + passed
+    
+    # Penetration budget remaining
+    penetration_budget = max(0, max_acceptable_penetrations - total_losses)
+    
+    # If no UAVs left, skip
+    if remaining_uavs == 0:
+        return WeaponType.SKIP
+    
+    # Critical: If we're over budget or at limit, fire everything
+    if total_losses >= max_acceptable_penetrations:
+        # Already exceeded target, use all firepower
+        if kinetic_ammo > 0:
+            return WeaponType.KINETIC
+        elif de_ammo > 0:
+            return WeaponType.DIRECTED_ENERGY
+        else:
+            return WeaponType.SKIP
+    
+    # If remaining UAVs exceed our penetration budget, must engage aggressively
+    if remaining_uavs > penetration_budget:
+        # Need to reduce UAV count, prefer reliable kinetic
+        if kinetic_ammo > 0:
+            return WeaponType.KINETIC
+        elif de_ammo > 0:
+            return WeaponType.DIRECTED_ENERGY
+        else:
+            return WeaponType.SKIP
+    
+    # We have budget cushion - use cheaper DE when available
+    if de_ammo > 0:
+        return WeaponType.DIRECTED_ENERGY
+    
+    # Fallback to kinetic
+    if kinetic_ammo > 0:
+        return WeaponType.KINETIC
+    
+    # No ammo left
+    return WeaponType.SKIP
 
 
 def nearest_threat_first_strategy(state: Dict[str, Any]) -> WeaponType:
@@ -26,8 +90,8 @@ def nearest_threat_first_strategy(state: Dict[str, Any]) -> WeaponType:
     
     This is the traditional heuristic approach used as a benchmark for comparing
     the RL agent's performance. The strategy is simple and greedy:
-    - Prioritizes cheap directed energy weapons
-    - Falls back to expensive kinetic interceptors
+    - Prioritizes reliable kinetic interceptors
+    - Falls back to cheaper directed energy weapons
     - Never intentionally skips (only when no weapons remain)
     
     This strategy does NOT consider:
@@ -35,39 +99,14 @@ def nearest_threat_first_strategy(state: Dict[str, Any]) -> WeaponType:
     - Cost-benefit analysis
     - Threat distance or urgency
     - Remaining swarm size
-    
-    Args:
-        state: Dictionary containing current simulation state with keys:
-            - remaining_uavs (int): Number of alive UAVs
-            - remaining_kinetic (int): Kinetic interceptors available
-            - remaining_de (int): Directed energy shots available
-            - cumulative_cost (float): Total cost spent so far
-            - nearest_distance (float or None): Distance to nearest UAV in km
-            - step (int): Current simulation step number
-            
-    Returns:
-        WeaponType: Action to take (DIRECTED_ENERGY, KINETIC, or SKIP)
-        
-    Examples:
-        >>> state = {'remaining_de': 50, 'remaining_kinetic': 10, ...}
-        >>> action = nearest_threat_first_strategy(state)
-        >>> print(action)  # WeaponType.DIRECTED_ENERGY
-        
-        >>> state = {'remaining_de': 0, 'remaining_kinetic': 10, ...}
-        >>> action = nearest_threat_first_strategy(state)
-        >>> print(action)  # WeaponType.KINETIC
-        
-        >>> state = {'remaining_de': 0, 'remaining_kinetic': 0, ...}
-        >>> action = nearest_threat_first_strategy(state)
-        >>> print(action)  # WeaponType.SKIP
     """
-    # Priority 1: Use cheap directed energy if available
-    if state['remaining_de'] > 0:
-        return WeaponType.DIRECTED_ENERGY
-    
-    # Priority 2: Use expensive kinetic as fallback
-    elif state['remaining_kinetic'] > 0:
+    # Priority 1: Use reliable kinetic if available
+    if state['remaining_kinetic'] > 0:
         return WeaponType.KINETIC
+    
+    # Priority 2: Use cheaper directed energy as fallback
+    elif state['remaining_de'] > 0:
+        return WeaponType.DIRECTED_ENERGY
     
     # Priority 3: No weapons left, must skip
     else:
@@ -79,15 +118,6 @@ def get_baseline_strategy():
     Factory function to get the baseline strategy.
     
     Useful for programmatic access and consistency across codebase.
-    
-    Returns:
-        Callable strategy function
-        
-    Example:
-        >>> strategy = get_baseline_strategy()
-        >>> from combat_simulation import CombatSimulation
-        >>> sim = CombatSimulation(swarm_size=100)
-        >>> results = sim.run_simulation(strategy)
     """
     return nearest_threat_first_strategy
 
@@ -95,17 +125,14 @@ def get_baseline_strategy():
 def get_strategy_description() -> str:
     """
     Get a human-readable description of the baseline strategy.
-    
-    Returns:
-        String description of the strategy logic
     """
     return """
     Nearest-Threat-First Baseline Strategy
     ======================================
     
     Logic:
-    1. IF directed energy available → FIRE directed energy
-    2. ELIF kinetic available → FIRE kinetic interceptor
+    1. IF kinetic available → FIRE kinetic interceptor
+    2. ELIF directed energy available → FIRE directed energy
     3. ELSE → SKIP (no weapons remain)
     
     Characteristics:
@@ -121,215 +148,12 @@ def get_strategy_description() -> str:
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code for baseline strategy.
-    """
-    print("=" * 70)
-    print("BASELINE STRATEGY MODULE - DEMONSTRATION")
-    print("=" * 70)
-    
-    print(get_strategy_description())
-    
-    # Test 1: Strategy behavior with different states
-    print("\n[Test 1] Strategy behavior with different ammunition states:")
-    
-    test_states = [
-        {
-            'remaining_uavs': 100,
-            'remaining_kinetic': 50,
-            'remaining_de': 100,
-            'cumulative_cost': 0,
-            'nearest_distance': 50.0,
-            'step': 1
-        },
-        {
-            'remaining_uavs': 100,
-            'remaining_kinetic': 50,
-            'remaining_de': 0,  # DE depleted
-            'cumulative_cost': 1000000,
-            'nearest_distance': 30.0,
-            'step': 50
-        },
-        {
-            'remaining_uavs': 100,
-            'remaining_kinetic': 0,  # Both depleted
-            'remaining_de': 0,
-            'cumulative_cost': 10000000,
-            'nearest_distance': 10.0,
-            'step': 100
-        },
-        {
-            'remaining_uavs': 50,
-            'remaining_kinetic': 0,
-            'remaining_de': 5,  # Low on DE, no kinetic
-            'cumulative_cost': 50000000,
-            'nearest_distance': 5.0,
-            'step': 200
-        }
-    ]
-    
-    for i, state in enumerate(test_states, 1):
-        action = nearest_threat_first_strategy(state)
-        print(f"\n  State {i}:")
-        print(f"    Kinetic: {state['remaining_kinetic']}, DE: {state['remaining_de']}")
-        print(f"    UAVs: {state['remaining_uavs']}, Distance: {state['nearest_distance']} km")
-        print(f"    Action: {action.value}")
-    
-    # Test 2: Run full simulation with baseline strategy
-    print("\n[Test 2] Full simulation with baseline strategy:")
-    
-    from combat_simulation import CombatSimulation
-    
-    sim = CombatSimulation(swarm_size=100, random_seed=42)
-    results = sim.run_simulation(nearest_threat_first_strategy, verbose=False)
-    
-    print(f"\n  Simulation Results:")
-    print(f"    Swarm size: {results['swarm_size']}")
-    print(f"    UAVs destroyed: {results['uavs_destroyed']}")
-    print(f"    UAVs penetrated: {results['uavs_penetrated']}")
-    print(f"    Penetration rate: {results['penetration_rate']*100:.2f}%")
-    print(f"    Defense cost: ${results['defense_cost']:,.0f}")
-    print(f"    Penetration cost: ${results['penetration_cost']:,.0f}")
-    print(f"    Total cost: ${results['total_cost']:,.0f}")
-    print(f"    Cost-exchange ratio: {results['cost_exchange_ratio']:.2f}")
-    print(f"    Kinetic fired: {results['kinetic_fired']} (hits: {results['kinetic_hits']})")
-    print(f"    DE fired: {results['de_fired']} (hits: {results['de_hits']})")
-    print(f"    Steps: {results['steps']}")
-    
-    # Test 3: Multiple runs with different swarm sizes
-    print("\n[Test 3] Baseline performance across different swarm sizes:")
-    
-    swarm_sizes = [50, 100, 200, 300, 400]
-    
-    print(f"\n  {'Swarm Size':>12} {'Penetrated':>12} {'Pen Rate':>10} {'Cost-Exch':>12} {'Total Cost':>15}")
-    print(f"  {'-'*12} {'-'*12} {'-'*10} {'-'*12} {'-'*15}")
-    
-    for size in swarm_sizes:
-        sim = CombatSimulation(swarm_size=size, random_seed=123)
-        results = sim.run_simulation(nearest_threat_first_strategy, verbose=False)
-        
-        print(f"  {size:>12} {results['uavs_penetrated']:>12} "
-              f"{results['penetration_rate']*100:>9.1f}% "
-              f"{results['cost_exchange_ratio']:>12.2f} "
-              f"${results['total_cost']:>14,.0f}")
-    
-    # Test 4: Consistency check (deterministic behavior)
-    print("\n[Test 4] Consistency check - strategy is deterministic:")
-    
+    # Test strategy with a sample state
     state = {
-        'remaining_uavs': 150,
-        'remaining_kinetic': 25,
-        'remaining_de': 50,
-        'cumulative_cost': 5000000,
-        'nearest_distance': 75.0,
-        'step': 10
+        "initial_swarm_size": 100, "uavs_remaining": 80,
+        "current_step": 10, "max_steps": 200,
+        "kinetic_remaining": 600, "de_remaining": 100,
+        "penetrated_count": 3, "passed_count": 2
     }
-    
-    actions = []
-    for _ in range(10):
-        action = nearest_threat_first_strategy(state)
-        actions.append(action)
-    
-    all_same = all(a == actions[0] for a in actions)
-    print(f"  Same state tested 10 times: All actions identical? {all_same}")
-    print(f"  Action: {actions[0].value}")
-    
-    # Test 5: Compare with other strategies
-    print("\n[Test 5] Baseline vs alternative strategies (100 UAVs):")
-    
-    def kinetic_first_strategy(state):
-        """Alternative: prioritize kinetic over DE."""
-        if state['remaining_kinetic'] > 0:
-            return WeaponType.KINETIC
-        elif state['remaining_de'] > 0:
-            return WeaponType.DIRECTED_ENERGY
-        else:
-            return WeaponType.SKIP
-    
-    def conservative_strategy(state):
-        """Alternative: skip some threats."""
-        if state['nearest_distance'] is not None and state['nearest_distance'] > 50:
-            return WeaponType.SKIP
-        elif state['remaining_de'] > 0:
-            return WeaponType.DIRECTED_ENERGY
-        elif state['remaining_kinetic'] > 0:
-            return WeaponType.KINETIC
-        else:
-            return WeaponType.SKIP
-    
-    strategies = {
-        'Baseline (DE first)': nearest_threat_first_strategy,
-        'Kinetic first': kinetic_first_strategy,
-        'Conservative (skip far)': conservative_strategy
-    }
-    
-    print(f"\n  {'Strategy':<25} {'Pen Rate':>10} {'Cost-Exch':>12} {'Total Cost':>15}")
-    print(f"  {'-'*25} {'-'*10} {'-'*12} {'-'*15}")
-    
-    for name, strategy in strategies.items():
-        sim = CombatSimulation(swarm_size=100, random_seed=999)
-        results = sim.run_simulation(strategy, verbose=False)
-        
-        print(f"  {name:<25} {results['penetration_rate']*100:>9.1f}% "
-              f"{results['cost_exchange_ratio']:>12.2f} "
-              f"${results['total_cost']:>14,.0f}")
-    
-    # Test 6: Edge cases
-    print("\n[Test 6] Edge case handling:")
-    
-    # Empty state (no UAVs, no weapons)
-    empty_state = {
-        'remaining_uavs': 0,
-        'remaining_kinetic': 0,
-        'remaining_de': 0,
-        'cumulative_cost': 0,
-        'nearest_distance': None,
-        'step': 0
-    }
-    action = nearest_threat_first_strategy(empty_state)
-    print(f"  Empty state (no UAVs, no weapons): {action.value}")
-    
-    # Only kinetic available
-    kinetic_only_state = {
-        'remaining_uavs': 100,
-        'remaining_kinetic': 10,
-        'remaining_de': 0,
-        'cumulative_cost': 0,
-        'nearest_distance': 20.0,
-        'step': 5
-    }
-    action = nearest_threat_first_strategy(kinetic_only_state)
-    print(f"  Only kinetic available: {action.value}")
-    
-    # Only DE available
-    de_only_state = {
-        'remaining_uavs': 100,
-        'remaining_kinetic': 0,
-        'remaining_de': 10,
-        'cumulative_cost': 0,
-        'nearest_distance': 20.0,
-        'step': 5
-    }
-    action = nearest_threat_first_strategy(de_only_state)
-    print(f"  Only DE available: {action.value}")
-    
-    # Test 7: Factory function
-    print("\n[Test 7] Factory function test:")
-    strategy_func = get_baseline_strategy()
-    print(f"  Strategy function retrieved: {strategy_func.__name__}")
-    
-    test_state = {
-        'remaining_uavs': 50,
-        'remaining_kinetic': 10,
-        'remaining_de': 20,
-        'cumulative_cost': 1000000,
-        'nearest_distance': 40.0,
-        'step': 15
-    }
-    action = strategy_func(test_state)
-    print(f"  Action from factory function: {action.value}")
-    
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("=" * 70)
-    print("\nBaseline strategy ready for evaluation against RL agent!")
+    action = adaptive_10percent_baseline(state)
+    print(f"Action: {action}")

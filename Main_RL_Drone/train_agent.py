@@ -3,9 +3,6 @@ RL Agent Training Module
 
 This module trains a Deep Q-Network (DQN) agent to learn optimal air defense
 strategies against UAV swarm attacks using Stable-Baselines3.
-
-Author: Master's Thesis Project
-Date: January 2026
 """
 
 import numpy as np
@@ -39,9 +36,6 @@ class TrainingMetricsCallback(BaseCallback):
     def __init__(self, verbose: int = 0):
         """
         Initialize the callback.
-        
-        Args:
-            verbose: Verbosity level (0=none, 1=info, 2=debug)
         """
         super().__init__(verbose)
         
@@ -65,9 +59,6 @@ class TrainingMetricsCallback(BaseCallback):
     def _on_step(self) -> bool:
         """
         Called at each step. Check if episode ended and log metrics.
-        
-        Returns:
-            True to continue training
         """
         # Check if episode ended
         if self.locals.get('dones') is not None:
@@ -105,9 +96,6 @@ class TrainingMetricsCallback(BaseCallback):
     def get_metrics(self) -> Dict[str, List]:
         """
         Get all collected metrics.
-        
-        Returns:
-            Dictionary of metric lists
         """
         return {
             'episode_rewards': self.episode_rewards,
@@ -127,9 +115,9 @@ def train_dqn_agent(
     buffer_size: int = 100_000,
     batch_size: int = 64,
     gamma: float = 0.99,
-    exploration_fraction: float = 0.9,  # CRITICAL FIX: Explore for 90% of training (was 80%)
+    exploration_fraction: float = 0.9,
     exploration_initial_eps: float = 1.0,
-    exploration_final_eps: float = 0.01,  # CRITICAL FIX: Lower final epsilon (was 0.05) for better exploitation
+    exploration_final_eps: float = 0.01,
     target_update_interval: int = 1000,
     swarm_size_range: tuple = (100, 500),
     save_dir: str = "trained_models",
@@ -142,28 +130,6 @@ def train_dqn_agent(
 ) -> tuple:
     """
     Train a DQN agent for air defense.
-    
-    Args:
-        total_timesteps: Total training steps
-        learning_rate: Learning rate for optimizer
-        buffer_size: Replay buffer size
-        batch_size: Minibatch size for training
-        gamma: Discount factor
-        exploration_fraction: Fraction of training for epsilon decay
-        exploration_initial_eps: Initial epsilon for exploration
-        exploration_final_eps: Final epsilon for exploration
-        target_update_interval: Steps between target network updates
-        swarm_size_range: (min, max) UAV count for episodes
-        save_dir: Directory to save models and logs
-        model_name: Name for saved model files
-        checkpoint_freq: Timesteps between checkpoint saves
-        eval_freq: Timesteps between evaluations
-        n_eval_episodes: Number of episodes for evaluation
-        random_seed: Random seed for reproducibility
-        verbose: Verbosity level (0=none, 1=info, 2=debug)
-        
-    Returns:
-        Tuple of (trained_model, training_metrics, save_path)
     """
     # Create save directory
     save_path = Path(save_dir)
@@ -342,11 +308,6 @@ def save_training_metrics(
 ) -> None:
     """
     Save training metrics to JSON file.
-    
-    Args:
-        metrics: Dictionary of training metrics
-        filepath: Path to save JSON file
-        training_time: Total training time in seconds
     """
     # Convert numpy arrays to lists for JSON serialization
     serializable_metrics = {}
@@ -370,11 +331,6 @@ def plot_learning_curves(
 ) -> None:
     """
     Plot and save learning curves.
-    
-    Args:
-        metrics: Dictionary of training metrics
-        save_path: Path to save plot
-        window_size: Window size for moving average
     """
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     fig.suptitle('DQN Training Progress', fontsize=16, fontweight='bold')
@@ -449,12 +405,6 @@ def plot_learning_curves(
 def load_trained_model(model_path: str) -> DQN:
     """
     Load a trained DQN model.
-    
-    Args:
-        model_path: Path to saved model (with or without .zip extension)
-        
-    Returns:
-        Loaded DQN model
     """
     model_path = Path(model_path)
     if model_path.suffix != '.zip':
@@ -464,103 +414,11 @@ def load_trained_model(model_path: str) -> DQN:
 
 
 if __name__ == "__main__":
-    """
-    Test and demonstration code for training.
-    """
-    print("=" * 70)
-    print("DQN TRAINING MODULE - DEMONSTRATION")
-    print("=" * 70)
-    
-    # Test 1: Quick training run (small scale for testing)
-    print("\n[Test 1] Quick training run (10,000 timesteps for testing):")
-    
-    model, metrics, model_path = train_dqn_agent(
-        total_timesteps=10_000,
-        learning_rate=0.0001,
-        buffer_size=10_000,
-        batch_size=64,
-        gamma=0.99,
-        exploration_fraction=0.8,
-        exploration_initial_eps=1.0,
-        exploration_final_eps=0.05,
-        target_update_interval=1000,
-        swarm_size_range=(50, 150),  # Smaller swarms for faster testing
-        save_dir="test_training",
-        model_name="test_dqn",
-        checkpoint_freq=5000,
-        eval_freq=2000,
-        n_eval_episodes=3,
+    model, metrics, path = train_dqn_agent(
+        total_timesteps=1_000_000,
+        save_dir="thesis_results/trained_models",
+        model_name="dqn_agent",
         random_seed=42,
         verbose=1
     )
-    
-    print(f"\nTraining completed!")
-    print(f"Episodes trained: {metrics['episode_count']}")
-    print(f"Model saved to: {model_path}")
-    
-    # Test 2: Verify metrics collection
-    print("\n[Test 2] Verify metrics collection:")
-    
-    if len(metrics['episode_rewards']) > 0:
-        print(f"  Total episodes: {len(metrics['episode_rewards'])}")
-        print(f"  Average reward (last 10): {np.mean(metrics['episode_rewards'][-10:]):,.0f}")
-        print(f"  Average penetration (last 10): {np.mean(metrics['penetration_rates'][-10:])*100:.2f}%")
-        print(f"  Average cost-exchange (last 10): {np.mean(metrics['cost_exchange_ratios'][-10:]):.2f}")
-    else:
-        print("  No episodes completed (timesteps too low)")
-    
-    # Test 3: Load and test saved model
-    print("\n[Test 3] Load and test saved model:")
-    
-    loaded_model = load_trained_model(model_path)
-    print(f"  Model loaded successfully: {type(loaded_model).__name__}")
-    
-    # Test loaded model on a few episodes
-    test_env = AirDefenseEnv(swarm_size_range=(50, 150), random_seed=999)
-    
-    print("\n  Testing loaded model on 3 episodes:")
-    for ep in range(3):
-        obs, info = test_env.reset()
-        episode_reward = 0
-        steps = 0
-        
-        while True:
-            action, _ = loaded_model.predict(obs, deterministic=False)
-            obs, reward, terminated, truncated, info = test_env.step(action)
-            episode_reward += reward
-            steps += 1
-            
-            if terminated or truncated:
-                break
-        
-        print(f"    Episode {ep+1}: Steps={steps}, Reward={episode_reward:,.0f}, "
-              f"Pen={info.get('penetration_rate', 0)*100:.1f}%, "
-              f"CostEx={info.get('cost_exchange_ratio', 0):.2f}")
-    
-    # Test 4: Verify saved files
-    print("\n[Test 4] Verify saved files:")
-    
-    save_dir = Path("test_training")
-    if save_dir.exists():
-        files = list(save_dir.rglob("*"))
-        print(f"  Files created in {save_dir}:")
-        for f in sorted(files):
-            if f.is_file():
-                size = f.stat().st_size
-                print(f"    {f.relative_to(save_dir)} ({size:,} bytes)")
-    
-    # Cleanup test files
-    print("\n[Test 5] Cleanup test files:")
-    import shutil
-    if save_dir.exists():
-        shutil.rmtree(save_dir)
-        print(f"  Removed test directory: {save_dir}")
-    
-    print("\n" + "=" * 70)
-    print("ALL TESTS COMPLETED SUCCESSFULLY")
-    print("=" * 70)
-    print("\nReady to train full agent with:")
-    print("  python train_agent.py")
-    print("\nOr in Python:")
-    print("  from train_agent import train_dqn_agent")
-    print("  model, metrics, path = train_dqn_agent(total_timesteps=1_000_000)")
+    print(f"Training complete. Model saved to: {path}")
